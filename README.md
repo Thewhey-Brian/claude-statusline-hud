@@ -150,15 +150,19 @@ All expensive operations are cached to keep the statusline snappy:
 ## File Structure
 
 ```
-claude-statusline-plugin/
+claude-statusline-hud/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin manifest
-├── scripts/
-│   └── statusline.sh        # Main statusline script
-├── skills/
-│   └── statusline/
-│       └── SKILL.md         # /statusline skill for preset switching
-├── settings.json             # Auto-configures statusLine on install
+│   └── marketplace.json       # Marketplace catalog
+├── plugins/
+│   └── claude-statusline-hud/
+│       ├── .claude-plugin/
+│       │   └── plugin.json    # Plugin manifest
+│       ├── scripts/
+│       │   └── statusline.sh  # Main statusline script
+│       ├── skills/
+│       │   └── statusline/
+│       │       └── SKILL.md   # /statusline skill for preset switching
+│       └── settings.json      # Auto-configures statusLine on install
 ├── LICENSE
 └── README.md
 ```
