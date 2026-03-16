@@ -239,113 +239,156 @@ CTX_BAR=$(make_bar "$PCT" "$BAR_W")
 CTX_WARN=""
 [ "$EXCEEDS_200K" = "true" ] && CTX_WARN=" ${BOLD}${BG_YELLOW} ⚠ ${RST}"
 
-# ---- Rate limit token discovery (tries multiple sources) ----
+# ---- Rate limit: token discovery ----
+# Inspired by claude-hud's approach (github.com/jarrodwatts/claude-hud)
 USAGE_CACHE="/tmp/.claude_sl_usage"
-USAGE_ERR_CACHE="/tmp/.claude_sl_usage_err"
+USAGE_META="/tmp/.claude_sl_usage_meta"  # tracks 429 count + error state
+USAGE_LOCK="/tmp/.claude_sl_usage.lock"
 USAGE_JSON=""
+RL_SYNCING=0
 RL_ERR=""
 
 get_oauth_token() {
-  local tk=""
+  local tk="" cred_json=""
 
   # Source 1: macOS Keychain (multiple possible service names)
   if is_mac; then
     for svc in "Claude Code-credentials" "claude-code-credentials" "Claude-credentials"; do
-      tk=$(security find-generic-password -s "$svc" -w 2>/dev/null | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+      cred_json=$(security find-generic-password -s "$svc" -w 2>/dev/null)
+      [ -z "$cred_json" ] && continue
+      # Check token expiry before using
+      local expires_at=$(printf '%s' "$cred_json" | jq -r '.claudeAiOauth.expiresAt // 0' 2>/dev/null)
+      if [ "$expires_at" != "0" ] && [ -n "$expires_at" ] && [ "$NOW" -gt "$expires_at" ] 2>/dev/null; then
+        continue  # token expired, try next source
+      fi
+      tk=$(printf '%s' "$cred_json" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
       [ -n "$tk" ] && { printf '%s' "$tk"; return 0; }
     done
-    # Also try account-based lookup
-    tk=$(security find-generic-password -a "claude-code" -w 2>/dev/null | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-    [ -n "$tk" ] && { printf '%s' "$tk"; return 0; }
+    # Account-based lookup
+    cred_json=$(security find-generic-password -a "claude-code" -w 2>/dev/null)
+    if [ -n "$cred_json" ]; then
+      tk=$(printf '%s' "$cred_json" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+      [ -n "$tk" ] && { printf '%s' "$tk"; return 0; }
+    fi
   fi
 
-  # Source 2: Credentials JSON file (Linux primary, macOS fallback)
+  # Source 2: Credentials JSON files (Linux primary, macOS fallback)
   for cred_file in \
+    "$HOME/.claude/.credentials.json" \
     "$HOME/.claude/credentials.json" \
     "$HOME/.config/claude/credentials.json" \
     "${XDG_CONFIG_HOME:-$HOME/.config}/claude-code/credentials.json"; do
     if [ -f "$cred_file" ]; then
+      # Check expiry
+      local expires_at=$(jq -r '.claudeAiOauth.expiresAt // 0' "$cred_file" 2>/dev/null)
+      if [ "$expires_at" != "0" ] && [ -n "$expires_at" ] && [ "$NOW" -gt "$expires_at" ] 2>/dev/null; then
+        continue
+      fi
       tk=$(jq -r '.claudeAiOauth.accessToken // empty' "$cred_file" 2>/dev/null)
-      [ -n "$tk" ] && { printf '%s' "$tk"; return 0; }
-      # Try alternate key paths
-      tk=$(jq -r '.oauthAccessToken // .accessToken // empty' "$cred_file" 2>/dev/null)
       [ -n "$tk" ] && { printf '%s' "$tk"; return 0; }
     fi
   done
 
-  # Source 3: Environment variable (user can set as override)
-  if [ -n "${CLAUDE_OAUTH_TOKEN:-}" ]; then
-    printf '%s' "$CLAUDE_OAUTH_TOKEN"
-    return 0
-  fi
+  # Source 3: Environment variable override
+  [ -n "${CLAUDE_OAUTH_TOKEN:-}" ] && { printf '%s' "$CLAUDE_OAUTH_TOKEN"; return 0; }
 
   return 1
 }
 
-# ---- Fetch usage with aggressive caching ----
-# The /api/oauth/usage endpoint has a very low rate limit (~5 requests per token).
-# Once exhausted, the token gets permanently 429'd.
-# Strategy: cache 30min normally, back off to 2h on 429, refresh token on 429.
-USAGE_BACKOFF="/tmp/.claude_sl_usage_backoff"
-CACHE_TTL=1800  # 30 minutes default
+# ---- Rate limit: fetch with exponential backoff ----
+# Cache 5min on success. On 429, exponential backoff: 60s → 120s → 240s → 300s (cap).
+# Always show last known good data during backoff with "(syncing...)" indicator.
 
-# If we hit a 429 before, use longer backoff
-if [ -f "$USAGE_BACKOFF" ]; then
-  CACHE_TTL=7200  # 2 hours after a 429
+# Load meta state: 429_COUNT and LAST_ERR
+RATE_LIMITED_COUNT=0
+if [ -f "$USAGE_META" ]; then
+  eval "$(cat "$USAGE_META")"  # sets RATE_LIMITED_COUNT, LAST_ERR
+fi
+
+# Calculate backoff TTL
+CACHE_TTL=300  # 5 minutes default
+if [ "$RATE_LIMITED_COUNT" -gt 0 ]; then
+  # Exponential: 60 * 2^(count-1), capped at 300s
+  BACKOFF=$((60 * (1 << (RATE_LIMITED_COUNT - 1))))
+  [ "$BACKOFF" -gt 300 ] && BACKOFF=300
+  CACHE_TTL=$BACKOFF
 fi
 
 if [ "$(file_age "$USAGE_CACHE")" -lt "$CACHE_TTL" ]; then
   USAGE_JSON=$(cat "$USAGE_CACHE")
+  # If we're in backoff, mark as syncing
+  [ "$RATE_LIMITED_COUNT" -gt 0 ] && RL_SYNCING=1
 else
-  TK=$(get_oauth_token)
-  if [ -n "$TK" ]; then
-    RESP=$(curl -s --max-time 5 -w '\n%{http_code}' "https://api.anthropic.com/api/oauth/usage" \
-      -H "Accept: application/json" -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $TK" -H "anthropic-beta: oauth-2025-04-20" 2>/dev/null)
-    HTTP_CODE=$(printf '%s' "$RESP" | tail -1)
-    BODY=$(printf '%s' "$RESP" | sed '$d')
+  # File lock: prevent concurrent API calls from multiple renders
+  if ( set -o noclobber; echo $$ > "$USAGE_LOCK" ) 2>/dev/null; then
+    # Clean up lock on exit
+    trap "rm -f '$USAGE_LOCK'" EXIT
 
-    if [ "$HTTP_CODE" = "200" ] && printf '%s' "$BODY" | jq -e '.five_hour' >/dev/null 2>&1; then
-      USAGE_JSON="$BODY"
-      printf '%s' "$USAGE_JSON" > "$USAGE_CACHE"
-      rm -f "$USAGE_ERR_CACHE" "$USAGE_BACKOFF" 2>/dev/null
-    elif [ "$HTTP_CODE" = "429" ]; then
-      # Token is burned — back off and use stale cache
-      touch "$USAGE_BACKOFF"
-      if [ -f "$USAGE_CACHE" ]; then
-        USAGE_JSON=$(cat "$USAGE_CACHE")
+    TK=$(get_oauth_token)
+    if [ -n "$TK" ]; then
+      RESP=$(curl -s --max-time 5 -w '\n%{http_code}' "https://api.anthropic.com/api/oauth/usage" \
+        -H "Accept: application/json" -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TK" -H "anthropic-beta: oauth-2025-04-20" 2>/dev/null)
+      HTTP_CODE=$(printf '%s' "$RESP" | tail -1)
+      BODY=$(printf '%s' "$RESP" | sed '$d')
+
+      if [ "$HTTP_CODE" = "200" ] && printf '%s' "$BODY" | jq -e '.five_hour' >/dev/null 2>&1; then
+        USAGE_JSON="$BODY"
+        printf '%s' "$USAGE_JSON" > "$USAGE_CACHE"
+        printf "RATE_LIMITED_COUNT=0\nLAST_ERR=''\n" > "$USAGE_META"
+      elif [ "$HTTP_CODE" = "429" ]; then
+        RATE_LIMITED_COUNT=$((RATE_LIMITED_COUNT + 1))
+        printf "RATE_LIMITED_COUNT=%d\nLAST_ERR='rate limited'\n" "$RATE_LIMITED_COUNT" > "$USAGE_META"
+        # Use stale cache + syncing indicator
+        if [ -f "$USAGE_CACHE" ]; then
+          USAGE_JSON=$(cat "$USAGE_CACHE")
+          RL_SYNCING=1
+          # Touch cache to reset the age timer for backoff
+          touch "$USAGE_CACHE"
+        else
+          RL_ERR="rate limited"
+        fi
+      elif [ "$HTTP_CODE" = "401" ]; then
+        RL_ERR="token expired"
+        printf "RATE_LIMITED_COUNT=0\nLAST_ERR='token expired'\n" > "$USAGE_META"
+      elif [ "$HTTP_CODE" = "403" ]; then
+        RL_ERR="not on Max plan"
+        printf "RATE_LIMITED_COUNT=0\nLAST_ERR='not on Max plan'\n" > "$USAGE_META"
       else
-        RL_ERR="rate limited"
-        printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
+        # Transient error — use stale cache
+        if [ -f "$USAGE_CACHE" ]; then
+          USAGE_JSON=$(cat "$USAGE_CACHE")
+          RL_SYNCING=1
+        else
+          RL_ERR="http ${HTTP_CODE:-err}"
+        fi
       fi
-    elif [ "$HTTP_CODE" = "401" ]; then
-      RL_ERR="token expired"
-      printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
-    elif [ "$HTTP_CODE" = "403" ]; then
-      RL_ERR="not on Max plan"
-      printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
     else
-      # Other transient error — use stale cache if available
-      if [ -f "$USAGE_CACHE" ]; then
-        USAGE_JSON=$(cat "$USAGE_CACHE")
-      else
-        RL_ERR="http ${HTTP_CODE}"
-        printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
-      fi
+      RL_ERR="no token"
     fi
+
+    rm -f "$USAGE_LOCK"
+    trap - EXIT
   else
-    RL_ERR="no token"
-    printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
+    # Lock held by another render — just use cache
+    [ -f "$USAGE_CACHE" ] && USAGE_JSON=$(cat "$USAGE_CACHE")
+    # Clean up stale locks (>30s)
+    if [ "$(file_age "$USAGE_LOCK")" -gt 30 ]; then
+      rm -f "$USAGE_LOCK"
+    fi
   fi
 fi
 
-# If no fresh data and we have a cached error, load it
-if [ -z "$USAGE_JSON" ] && [ -z "$RL_ERR" ] && [ -f "$USAGE_ERR_CACHE" ]; then
-  RL_ERR=$(cat "$USAGE_ERR_CACHE")
+# Fallback to cached error
+if [ -z "$USAGE_JSON" ] && [ -z "$RL_ERR" ] && [ -n "${LAST_ERR:-}" ]; then
+  RL_ERR="$LAST_ERR"
 fi
 
 # ---- Build rate limit display ----
 RL_DISPLAY=""
+SYNC_TAG=""
+[ "$RL_SYNCING" = "1" ] && SYNC_TAG=" ${DIM}(syncing...)${RST}"
+
 if [ -n "$USAGE_JSON" ]; then
   U5=$(printf '%s' "$USAGE_JSON" | jq -r '.five_hour.utilization // 0' | cut -d. -f1)
   U5_CLR=$(bar_color "$U5"); U5_BAR=$(make_bar "$U5" "$RL_BAR_W")
@@ -358,12 +401,12 @@ if [ -n "$USAGE_JSON" ]; then
   U7_D=$((U7_TOTAL_H / 24)); U7_H=$((U7_TOTAL_H % 24))
 
   if [ "$TIER" = "compact" ]; then
-    RL_DISPLAY="${DIM}5h${RST} ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST}${SEP}${DIM}7d${RST} ${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST}"
+    RL_DISPLAY="${DIM}5h${RST} ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST}${SEP}${DIM}7d${RST} ${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST}${SYNC_TAG}"
   else
-    RL_DISPLAY="${DIM}Usage${RST}  ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST} ${DIM}(${U5_H}h ${U5_M}m / 5h)${RST}${SEP}${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST} ${DIM}(${U7_D}d ${U7_H}h / 7d)${RST}"
+    RL_DISPLAY="${DIM}Usage${RST}  ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST} ${DIM}(${U5_H}h ${U5_M}m / 5h)${RST}${SEP}${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST} ${DIM}(${U7_D}d ${U7_H}h / 7d)${RST}${SYNC_TAG}"
   fi
 else
-  # Always show usage section — with error hint so user knows why
+  # Always show usage section with error hint
   if [ "$TIER" = "compact" ]; then
     RL_DISPLAY="${DIM}usage ${YELLOW}--${RST}"
   else
