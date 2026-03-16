@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "author": {
     "name": "Xinyu Guo",
-    "url": "https://github.com/xinyuguo"
+    "url": "https://github.com/Thewhey-Brian"
   },
   "repository": "https://github.com/Thewhey-Brian/claude-statusline-hud",
   "license": "MIT",
@@ -17,5 +17,10 @@
     "context-window"
   ],
   "skills": "./skills/",
-  "settings": "./settings.json"
+  "settings": {
+    "statusLine": {
+      "type": "command",
+      "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh"
+    }
+  }
 }
