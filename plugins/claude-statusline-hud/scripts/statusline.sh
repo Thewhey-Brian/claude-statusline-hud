@@ -222,8 +222,17 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   if [ "$(file_age "$ACTIVITY_CACHE")" -lt 2 ]; then
     ACTIVITY_LINE=$(cat "$ACTIVITY_CACHE")
   else
-    ACTIVITY_LINE=$(tail -100 "$TRANSCRIPT" 2>/dev/null | jq -rs '
-      [.[] | select(.type == "tool_use" or .type == "tool_result")] as $events |
+    # Transcript JSONL structure:
+    #   tool_use  → inside .message.content[] of type:"assistant" entries
+    #   tool_result → inside .message.content[] of type:"user" entries
+    #   TodoWrite/TaskCreate → tool_use with specific .name
+    ACTIVITY_LINE=$(tail -50 "$TRANSCRIPT" 2>/dev/null | jq -rs '
+      # Flatten: extract tool_use and tool_result from nested message content
+      [.[] | (.message.content // [])[] |
+        select(.type == "tool_use" or .type == "tool_result")
+      ] as $events |
+
+      # Build tool status map
       (reduce $events[] as $e ({};
         if $e.type == "tool_use" then
           .[$e.id] = {name: $e.name, target: (
@@ -241,11 +250,17 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
           .[$e.tool_use_id].done = true
         else . end
       )) as $tools |
+
+      # Last 5 tools, most recent first
       ([$tools | to_entries | .[-5:] | reverse[] |
         if .value.done then "✓ " + .value.name
         else "◐ " + .value.name + (if .value.target != "" then " " + .value.target else "" end) end
       ] | join("  ")) as $tool_str |
-      [.[] | select(.type == "tool_use" and (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate"))] as $todo_events |
+
+      # Todos: find most recent TodoWrite/TaskCreate/TaskUpdate
+      [$events[] | select(.type == "tool_use" and
+        (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate")
+      )] as $todo_events |
       (if ($todo_events | length) > 0 then
         ($todo_events | last) as $last_todo |
         if $last_todo.name == "TodoWrite" then
@@ -257,9 +272,12 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
           else "" end
         else "" end
       else "" end) as $todo_str |
+
+      # Agents: running Agent tool_use without tool_result
       ([$tools | to_entries[] | select(.value.name == "Agent" and .value.done == false)] |
         if length > 0 then (first | "⚡ " + .value.target) else "" end
       ) as $agent_str |
+
       [[$tool_str, $todo_str, $agent_str] | .[] | select(length > 0)] | join("  │  ")
     ' 2>/dev/null)
     printf '%s' "$ACTIVITY_LINE" > "$ACTIVITY_CACHE"
