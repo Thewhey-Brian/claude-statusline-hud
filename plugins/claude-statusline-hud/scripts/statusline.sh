@@ -282,7 +282,8 @@ get_oauth_token() {
   return 1
 }
 
-if [ "$(file_age "$USAGE_CACHE")" -lt 60 ]; then
+# Cache for 5 minutes — rate limits change slowly, avoids API 429s
+if [ "$(file_age "$USAGE_CACHE")" -lt 300 ]; then
   USAGE_JSON=$(cat "$USAGE_CACHE")
 else
   TK=$(get_oauth_token)
@@ -304,8 +305,13 @@ else
       RL_ERR="not on Max plan"
       printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
     else
-      RL_ERR="http ${HTTP_CODE}"
-      printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
+      # Transient error (429/5xx/timeout) — use stale cache if available
+      if [ -f "$USAGE_CACHE" ]; then
+        USAGE_JSON=$(cat "$USAGE_CACHE")
+      else
+        RL_ERR="http ${HTTP_CODE}"
+        printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
+      fi
     fi
   else
     RL_ERR="no token"
