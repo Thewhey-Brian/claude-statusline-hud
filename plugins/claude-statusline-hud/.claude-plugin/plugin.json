@@ -1,7 +1,7 @@
 {
   "name": "claude-statusline-hud",
   "description": "A comprehensive, btop-inspired statusline HUD for Claude Code with context, rate limits, session stats, system vitals, and configurable presets.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": {
     "name": "Xinyu Guo",
     "url": "https://github.com/Thewhey-Brian"
@@ -15,13 +15,5 @@
     "system-vitals",
     "rate-limits",
     "context-window"
-  ],
-  "skills": "./skills/",
-  "hooks": "./hooks.json",
-  "settings": {
-    "statusLine": {
-      "type": "command",
-      "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/statusline.sh"
-    }
-  }
+  ]
 }

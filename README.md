@@ -180,9 +180,11 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 
 **Example:**
 ```
-› ◐ Edit auth.ts  ✓ Read  ✓ Bash  ✓ Grep  ✓ Read
+› ◐ Edit auth.ts · ✓ Read · ✓ Bash · ✓ Grep │ ▸ Fix auth (2/5) │ ⚡ explore
 ```
-Reading left-to-right: Edit is **running now** (`◐`), the other 4 tools already **completed** (`✓`).
+- Tools separated by `·` (middle dot)
+- Sections (tools, todos, agents) separated by `│`
+- Reading left-to-right: Edit is **running now** (`◐`), the other 3 already **completed** (`✓`), a todo is in progress, and a subagent is running.
 
 **Symbols:**
 | Symbol | Meaning |
@@ -271,7 +273,8 @@ claude-statusline-hud/
 │   └── claude-statusline-hud/
 │       ├── .claude-plugin/
 │       │   └── plugin.json    # Plugin manifest
-│       ├── hooks.json          # SessionStart hook for auto-setup
+│       ├── hooks/
+│       │   └── hooks.json     # SessionStart hook for auto-setup
 │       ├── scripts/
 │       │   ├── statusline.sh  # Main statusline script
 │       │   ├── setup.sh       # Post-install: injects statusLine config

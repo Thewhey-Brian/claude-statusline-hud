@@ -222,64 +222,60 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   if [ "$(file_age "$ACTIVITY_CACHE")" -lt 2 ]; then
     ACTIVITY_LINE=$(cat "$ACTIVITY_CACHE")
   else
-    # Transcript JSONL structure:
-    #   tool_use  → inside .message.content[] of type:"assistant" entries
-    #   tool_result → inside .message.content[] of type:"user" entries
-    #   TodoWrite/TaskCreate → tool_use with specific .name
-    ACTIVITY_LINE=$(tail -50 "$TRANSCRIPT" 2>/dev/null | jq -rs '
-      # Flatten: extract tool_use and tool_result from nested message content
-      [.[] | (.message.content // [])[] |
-        select(.type == "tool_use" or .type == "tool_result")
-      ] as $events |
+    # Transcript JSONL: tools are nested in .message.content[]
+    # Step 1: Extract lightweight events line-by-line via jq -c pipe (no slurp)
+    EVENTS_FILE="/tmp/.claude_sl_events_$$"
+    tail -80 "$TRANSCRIPT" 2>/dev/null | jq -c '
+      [(.message.content // [])[] | select(.type == "tool_use" or .type == "tool_result") |
+        if .type == "tool_use" then
+          {t: "u", id: .id, n: .name, tgt: (
+            if (.name == "Edit" or .name == "Write" or .name == "Read") then
+              (.input.file_path // "" | split("/") | last)
+            elif (.name == "Grep" or .name == "Glob") then
+              (.input.pattern // "")[0:20]
+            elif .name == "Bash" then
+              (.input.command // "")[0:25]
+            elif .name == "Agent" then
+              (.input.description // "agent")
+            elif .name == "TodoWrite" then
+              (.input.todos // [] |
+                ([.[] | select(.status == "completed")] | length | tostring) + "/" +
+                (length | tostring) + " " +
+                ([.[] | select(.status == "in_progress")] | first // {content:""} | .content // "")[0:25])
+            else "" end)}
+        else {t: "r", id: .tool_use_id} end
+      ][]
+    ' 2>/dev/null > "$EVENTS_FILE"
 
-      # Build tool status map
-      (reduce $events[] as $e ({};
-        if $e.type == "tool_use" then
-          .[$e.id] = {name: $e.name, target: (
-            if ($e.name == "Edit" or $e.name == "Write" or $e.name == "Read") then
-              ($e.input.file_path // "" | split("/") | last)
-            elif ($e.name == "Grep" or $e.name == "Glob") then
-              ($e.input.pattern // "")[0:20]
-            elif $e.name == "Bash" then
-              ($e.input.command // "")[0:25]
-            elif $e.name == "Agent" then
-              ($e.input.description // "agent")
+    # Step 2: Build display from extracted events (single slurp of small data)
+    ACTIVITY_LINE=""
+    if [ -s "$EVENTS_FILE" ]; then
+      ACTIVITY_LINE=$(jq -rs '
+        (reduce .[] as $e ({};
+          if $e.t == "u" then .[$e.id] = {name: $e.n, target: $e.tgt, done: false}
+          elif $e.t == "r" then .[$e.id].done = true
+          else . end
+        )) as $tools |
+        ([$tools | to_entries | .[-5:] | reverse[] |
+          if .value.done then "✓ " + .value.name
+          else "◐ " + .value.name + (if .value.target != "" then " " + .value.target else "" end) end
+        ] | join(" · ")) as $tool_str |
+        ([$tools | to_entries[] | select(.value.name == "TodoWrite")] |
+          if length > 0 then
+            (last.value.target | split(" ") | .[0]) as $counts |
+            (last.value.target | split(" ") | .[1:] | join(" ")) as $task_name |
+            if ($task_name | length) > 0 then "▸ " + $task_name + " (" + $counts + ")"
+            elif ($counts | length) > 0 then "✓ todos " + $counts
             else "" end
-          ), done: false}
-        elif $e.type == "tool_result" then
-          .[$e.tool_use_id].done = true
-        else . end
-      )) as $tools |
-
-      # Last 5 tools, most recent first
-      ([$tools | to_entries | .[-5:] | reverse[] |
-        if .value.done then "✓ " + .value.name
-        else "◐ " + .value.name + (if .value.target != "" then " " + .value.target else "" end) end
-      ] | join("  ")) as $tool_str |
-
-      # Todos: find most recent TodoWrite/TaskCreate/TaskUpdate
-      [$events[] | select(.type == "tool_use" and
-        (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate")
-      )] as $todo_events |
-      (if ($todo_events | length) > 0 then
-        ($todo_events | last) as $last_todo |
-        if $last_todo.name == "TodoWrite" then
-          ($last_todo.input.todos // []) as $todos |
-          ([$todos[] | select(.status == "completed")] | length) as $done |
-          ([$todos[] | select(.status == "in_progress")] | first // null) as $current |
-          if $current then "▸ " + ($current.content // "task")[0:30] + " (" + ($done|tostring) + "/" + ($todos|length|tostring) + ")"
-          elif ($todos | length) > 0 then "✓ todos " + ($done|tostring) + "/" + ($todos|length|tostring)
           else "" end
-        else "" end
-      else "" end) as $todo_str |
-
-      # Agents: running Agent tool_use without tool_result
-      ([$tools | to_entries[] | select(.value.name == "Agent" and .value.done == false)] |
-        if length > 0 then (first | "⚡ " + .value.target) else "" end
-      ) as $agent_str |
-
-      [[$tool_str, $todo_str, $agent_str] | .[] | select(length > 0)] | join("  │  ")
-    ' 2>/dev/null)
+        ) as $todo_str |
+        ([$tools | to_entries[] | select(.value.name == "Agent" and .value.done == false)] |
+          if length > 0 then (first | "⚡ " + .value.target) else "" end
+        ) as $agent_str |
+        [[$tool_str, $todo_str, $agent_str] | .[] | select(length > 0)] | join("  │  ")
+      ' "$EVENTS_FILE" 2>/dev/null)
+    fi
+    rm -f "$EVENTS_FILE"
     printf '%s' "$ACTIVITY_LINE" > "$ACTIVITY_CACHE"
   fi
 fi
