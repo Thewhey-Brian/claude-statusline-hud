@@ -1,0 +1,10 @@
+{
+  "name": "Thewhey-Brian-claude-statusline-hud",
+  "description": "Marketplace for claude-statusline-hud plugin",
+  "plugins": [
+    {
+      "name": "claude-statusline-hud",
+      "path": "."
+    }
+  ]
+}

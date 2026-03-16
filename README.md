@@ -31,11 +31,19 @@ $1.31 | ⏱ 12m 3s | +142 -38 ▲
 
 ## Install
 
-```bash
-# Install from GitHub
-claude plugin install Thewhey-Brian/claude-statusline-hud
+### Quick Install (2 steps)
 
-# Or test locally
+```bash
+# Step 1: Add the marketplace
+/plugin marketplace add Thewhey-Brian/claude-statusline-hud
+
+# Step 2: Install the plugin
+/plugin install claude-statusline-hud
+```
+
+### Alternative: Test Locally
+
+```bash
 claude --plugin-dir /path/to/claude-statusline-plugin
 ```
 
