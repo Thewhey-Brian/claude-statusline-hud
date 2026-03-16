@@ -157,7 +157,7 @@ All expensive operations are cached to keep the statusline snappy:
 |---|---|---|
 | System vitals (CPU/mem/GPU/disk) | 5 seconds | Single cache file, sourced as shell vars |
 | Git info (branch, dirty, ahead/behind) | 10 seconds | |
-| Rate limit API call | 60 seconds | OAuth token from Keychain or credentials file |
+| Rate limit API call | 30 minutes (2h after 429) | The `/api/oauth/usage` endpoint has a very low rate limit (~5 req/token). The plugin caches aggressively and falls back to stale data on errors. |
 
 ## Requirements
 

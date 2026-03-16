@@ -282,8 +282,19 @@ get_oauth_token() {
   return 1
 }
 
-# Cache for 5 minutes — rate limits change slowly, avoids API 429s
-if [ "$(file_age "$USAGE_CACHE")" -lt 300 ]; then
+# ---- Fetch usage with aggressive caching ----
+# The /api/oauth/usage endpoint has a very low rate limit (~5 requests per token).
+# Once exhausted, the token gets permanently 429'd.
+# Strategy: cache 30min normally, back off to 2h on 429, refresh token on 429.
+USAGE_BACKOFF="/tmp/.claude_sl_usage_backoff"
+CACHE_TTL=1800  # 30 minutes default
+
+# If we hit a 429 before, use longer backoff
+if [ -f "$USAGE_BACKOFF" ]; then
+  CACHE_TTL=7200  # 2 hours after a 429
+fi
+
+if [ "$(file_age "$USAGE_CACHE")" -lt "$CACHE_TTL" ]; then
   USAGE_JSON=$(cat "$USAGE_CACHE")
 else
   TK=$(get_oauth_token)
@@ -297,7 +308,16 @@ else
     if [ "$HTTP_CODE" = "200" ] && printf '%s' "$BODY" | jq -e '.five_hour' >/dev/null 2>&1; then
       USAGE_JSON="$BODY"
       printf '%s' "$USAGE_JSON" > "$USAGE_CACHE"
-      rm -f "$USAGE_ERR_CACHE" 2>/dev/null
+      rm -f "$USAGE_ERR_CACHE" "$USAGE_BACKOFF" 2>/dev/null
+    elif [ "$HTTP_CODE" = "429" ]; then
+      # Token is burned — back off and use stale cache
+      touch "$USAGE_BACKOFF"
+      if [ -f "$USAGE_CACHE" ]; then
+        USAGE_JSON=$(cat "$USAGE_CACHE")
+      else
+        RL_ERR="rate limited"
+        printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
+      fi
     elif [ "$HTTP_CODE" = "401" ]; then
       RL_ERR="token expired"
       printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
@@ -305,7 +325,7 @@ else
       RL_ERR="not on Max plan"
       printf '%s' "$RL_ERR" > "$USAGE_ERR_CACHE"
     else
-      # Transient error (429/5xx/timeout) — use stale cache if available
+      # Other transient error — use stale cache if available
       if [ -f "$USAGE_CACHE" ]; then
         USAGE_JSON=$(cat "$USAGE_CACHE")
       else
