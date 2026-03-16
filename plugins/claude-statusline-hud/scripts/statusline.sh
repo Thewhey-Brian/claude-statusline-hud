@@ -80,7 +80,22 @@ BLUE=$'\033[34m'    MAGENTA=$'\033[35m' WHITE=$'\033[97m'
 RST=$'\033[0m'      BOLD=$'\033[1m'     DIM=$'\033[2m'     ITAL=$'\033[3m'
 BG_YELLOW=$'\033[43m'
 
-SEP=" ${DIM}│${RST} "
+# --- UTF-8 detection: fall back to ASCII on non-UTF-8 terminals ---
+USE_UNICODE=1
+case "${LANG:-}${LC_ALL:-}${LC_CTYPE:-}" in
+  *UTF-8*|*utf-8*|*utf8*) USE_UNICODE=1 ;;
+  *) # Test if terminal can render Unicode
+    if printf '█' 2>/dev/null | grep -q '█' 2>/dev/null; then USE_UNICODE=1
+    else USE_UNICODE=0; fi ;;
+esac
+
+if [ "$USE_UNICODE" = "1" ]; then
+  BAR_FILL="█" BAR_EMPTY="░" SEP_CHAR="│"
+else
+  BAR_FILL="#" BAR_EMPTY="-" SEP_CHAR="|"
+fi
+
+SEP=" ${DIM}${SEP_CHAR}${RST} "
 
 # --- Helpers ---
 make_bar() {
@@ -88,9 +103,10 @@ make_bar() {
   [ "$pct" -gt 100 ] 2>/dev/null && pct=100
   [ "$pct" -lt 0 ] 2>/dev/null && pct=0
   local filled=$((pct * width / 100)) empty=$((width - pct * width / 100))
-  local bar=""
-  [ "$filled" -gt 0 ] && bar=$(printf "%${filled}s" | tr ' ' '█')
-  [ "$empty" -gt 0 ] && bar="${bar}$(printf "%${empty}s" | tr ' ' '░')"
+  local bar="" i=0
+  while [ "$i" -lt "$filled" ]; do bar="${bar}${BAR_FILL}"; i=$((i+1)); done
+  i=0
+  while [ "$i" -lt "$empty" ]; do bar="${bar}${BAR_EMPTY}"; i=$((i+1)); done
   printf '%s' "$bar"
 }
 
@@ -98,17 +114,26 @@ mini_bar() {
   local pct=$1
   [ "$pct" -gt 100 ] 2>/dev/null && pct=100
   [ "$pct" -lt 0 ] 2>/dev/null && pct=0
-  local chars_0="▏" chars_1="▎" chars_2="▍" chars_3="▌"
-  local chars_4="▋" chars_5="▊" chars_6="▉" chars_7="█"
-  local width=4 total=$((pct * width))
-  local full=$((total / 100)) remainder=$(( (total % 100) * 8 / 100 ))
-  local bar="" i=0
-  while [ "$i" -lt "$full" ] && [ "$i" -lt "$width" ]; do bar="${bar}█"; i=$((i+1)); done
-  if [ "$i" -lt "$width" ] && [ "$remainder" -gt 0 ]; then
-    eval "bar=\"\${bar}\${chars_${remainder}}\""; i=$((i+1))
+  if [ "$USE_UNICODE" = "1" ]; then
+    local chars_0="▏" chars_1="▎" chars_2="▍" chars_3="▌"
+    local chars_4="▋" chars_5="▊" chars_6="▉" chars_7="█"
+    local width=4 total=$((pct * width))
+    local full=$((total / 100)) remainder=$(( (total % 100) * 8 / 100 ))
+    local bar="" i=0
+    while [ "$i" -lt "$full" ] && [ "$i" -lt "$width" ]; do bar="${bar}█"; i=$((i+1)); done
+    if [ "$i" -lt "$width" ] && [ "$remainder" -gt 0 ]; then
+      eval "bar=\"\${bar}\${chars_${remainder}}\""; i=$((i+1))
+    fi
+    while [ "$i" -lt "$width" ]; do bar="${bar} "; i=$((i+1)); done
+    printf '%s' "$bar"
+  else
+    # ASCII fallback: [##--] style
+    local width=4 filled=$((pct * width / 100)) empty=$((width - pct * width / 100))
+    local bar=""
+    [ "$filled" -gt 0 ] && bar=$(printf "%${filled}s" | tr ' ' '#')
+    [ "$empty" -gt 0 ] && bar="${bar}$(printf "%${empty}s" | tr ' ' '-')"
+    printf '%s' "$bar"
   fi
-  while [ "$i" -lt "$width" ]; do bar="${bar} "; i=$((i+1)); done
-  printf '%s' "$bar"
 }
 
 bar_color() {
