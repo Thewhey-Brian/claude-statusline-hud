@@ -20,11 +20,11 @@ is_mac() { [ "$OS" = "Darwin" ]; }
 is_linux() { [ "$OS" = "Linux" ]; }
 
 # --- Terminal width detection ---
-COLS="${COLUMNS:-$(tput cols 2>/dev/null || echo 120)}"
-# Width tiers: compact (<80), normal (80-119), wide (120+)
-if [ "$COLS" -lt 80 ] 2>/dev/null; then
+COLS="${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}"
+# Width tiers: compact (<70), normal (70-99), wide (100+)
+if [ "$COLS" -lt 70 ] 2>/dev/null; then
   TIER="compact"
-elif [ "$COLS" -lt 120 ] 2>/dev/null; then
+elif [ "$COLS" -lt 100 ] 2>/dev/null; then
   TIER="normal"
 else
   TIER="wide"

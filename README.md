@@ -7,27 +7,101 @@ A comprehensive, btop-inspired statusline HUD plugin for Claude Code. Cross-plat
 
 ## Preview
 
-**Wide terminal (120+ cols):**
+### Presets × Terminal Width
+
+<details>
+<summary><b>minimal</b> — 1 row</summary>
+
+**Wide (≥100 cols):**
 ```
 [Opus 4.6 (1M context) | Max] | my-project |  main ✓ ↑2 | ⚡ agent
-Context ██████████ 42% | Usage  ██░░░░░░░░ 6% (0h 18m / 5h) | ██████████ 23% (1d 14h / 7d)
-$1.31 | ⏱ 12m 3s (api 68%) | +142 -38 ▲ | cache 87% | 1k/min
-cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11% | disk ▋   15G/926G | bat ████ 80% | load 2.41
 ```
 
-**Normal terminal (80–119 cols):**
+**Normal (70–99 cols):**
 ```
 [Opus 4.6 | Max] | my-project |  main ✓
-Context ████████ 42% | Usage  ████████ 6% (0h 18m / 5h) | ████████ 23% (1d 14h / 7d)
+```
+
+**Compact (<70 cols):**
+```
+[Opus | Max] | my-project |  main ✓
+```
+</details>
+
+<details>
+<summary><b>essential</b> — 2 rows</summary>
+
+**Wide (≥100 cols):**
+```
+[Opus 4.6 (1M context) | Max] | my-project |  main [+2 ~1] ↑2
+Context ██████████ 42%  | Usage  ██░░░░░░░░ 6% (0h 18m / 5h) | ██████████ 23% (1d 14h / 7d)
+```
+
+**Normal (70–99 cols):**
+```
+[Opus 4.6 | Max] | my-project |  main ✓
+Context ████████ 42%  | Usage  ████████ 6% (0h 18m / 5h) | ████████ 23% (1d 14h / 7d)
+```
+
+**Compact (<70 cols):**
+```
+[Opus | Max] | my-project |  main ✓
+Context ██████ 42% | 5h ██████ 6% | 7d ██████ 23%
+```
+</details>
+
+<details open>
+<summary><b>full</b> — 3 rows (default)</summary>
+
+**Wide (≥100 cols):**
+```
+[Opus 4.6 (1M context) | Max] | my-project |  main ✓ ↑2 | ⚡ agent
+Context ██████████ 42%  | Usage  ██░░░░░░░░ 6% (0h 18m / 5h) | ██████████ 23% (1d 14h / 7d)
 $1.31 | ⏱ 12m 3s (api 68%) | +142 -38 ▲ | cache 87% | 1k/min
 ```
 
-**Compact terminal (<80 cols):**
+**Normal (70–99 cols):**
+```
+[Opus 4.6 | Max] | my-project |  main ✓
+Context ████████ 42%  | Usage  ████████ 6% (0h 18m / 5h) | ████████ 23% (1d 14h / 7d)
+$1.31 | ⏱ 12m 3s (api 68%) | +142 -38 ▲ | cache 87% | 1k/min
+```
+
+**Compact (<70 cols):**
 ```
 [Opus | Max] | my-project |  main ✓
 Context ██████ 42% | 5h ██████ 6% | 7d ██████ 23%
 $1.31 | ⏱ 12m 3s | +142 -38 ▲
 ```
+</details>
+
+<details>
+<summary><b>vitals</b> — 4 rows</summary>
+
+**Wide (≥100 cols):**
+```
+[Opus 4.6 (1M context) | Max] | my-project |  main ✓ ↑2 | ⚡ agent
+Context ██████████ 42%  | Usage  ██░░░░░░░░ 6% (0h 18m / 5h) | ██████████ 23% (1d 14h / 7d)
+$1.31 | ⏱ 12m 3s (api 68%) | +142 -38 ▲ | cache 87% | 1k/min
+cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11% | disk ▋   15G/926G | bat ████ 80% | load 2.41
+```
+
+**Normal (70–99 cols):**
+```
+[Opus 4.6 | Max] | my-project |  main ✓
+Context ████████ 42%  | Usage  ████████ 6% (0h 18m / 5h) | ████████ 23% (1d 14h / 7d)
+$1.31 | ⏱ 12m 3s (api 68%) | +142 -38 ▲ | cache 87% | 1k/min
+cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11% | disk ▋   15G/926G | bat ████ 80% | load 2.41
+```
+
+**Compact (<70 cols):**
+```
+[Opus | Max] | my-project |  main ✓
+Context ██████ 42% | 5h ██████ 6% | 7d ██████ 23%
+$1.31 | ⏱ 12m 3s | +142 -38 ▲
+cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11%
+```
+</details>
 
 ## Install
 
@@ -90,11 +164,11 @@ export CLAUDE_STATUSLINE_PRESET=essential
 
 The statusline automatically adapts to your terminal width:
 
-| Width | Model label | Bar width | Row 2 format | Row 4 items |
+| Width | Model label | Bar width | Usage format | Row 4 vitals |
 |---|---|---|---|---|
-| **Wide** (≥120) | `Opus 4.6 (1M context)` | 10 chars | Full with time breakdowns | All (cpu/mem/gpu/disk/bat/load) |
-| **Normal** (80–119) | `Opus 4.6` | 8 chars | Full with time breakdowns | All |
-| **Compact** (<80) | `Opus` | 6 chars | Short (no time breakdowns) | cpu/mem/gpu only |
+| **Wide** (≥100) | `Opus 4.6 (1M context)` | 10 chars | Full with time breakdowns | All (cpu/mem/gpu/disk/bat/load) |
+| **Normal** (70–99) | `Opus 4.6` | 8 chars | Full with time breakdowns | All |
+| **Compact** (<70) | `Opus` | 6 chars | Short (no time breakdowns) | cpu/mem/gpu only |
 
 ## What Each Metric Means
 
