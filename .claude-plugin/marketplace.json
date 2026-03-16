@@ -1,10 +1,30 @@
 {
-  "name": "Thewhey-Brian-claude-statusline-hud",
-  "description": "Marketplace for claude-statusline-hud plugin",
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-statusline-hud",
+  "description": "A comprehensive, btop-inspired statusline HUD for Claude Code",
+  "owner": {
+    "name": "Xinyu Guo",
+    "email": "thewhey.brian@gmail.com"
+  },
   "plugins": [
     {
       "name": "claude-statusline-hud",
-      "path": "."
+      "description": "Comprehensive statusline HUD with context, rate limits, session stats, system vitals, and configurable presets (minimal/essential/full/vitals).",
+      "version": "1.0.0",
+      "source": ".",
+      "author": {
+        "name": "Xinyu Guo"
+      },
+      "repository": "https://github.com/Thewhey-Brian/claude-statusline-hud",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": [
+        "statusline",
+        "hud",
+        "monitoring",
+        "system-vitals",
+        "rate-limits"
+      ]
     }
   ]
 }
