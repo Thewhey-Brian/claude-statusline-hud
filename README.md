@@ -145,9 +145,9 @@ claude --plugin-dir /path/to/claude-statusline-hud/plugins/claude-statusline-hud
 | Preset | Rows | What you see |
 |---|---|---|
 | `minimal` | 1 | Model, directory, git branch & status |
-| `essential` | 2 | + Context bar (with token counts & autocompact), rate limit bars |
-| **`full`** | **3–4** | **+ Live activity (tools/todos/agents), session stats (default)** |
-| `vitals` | 4–5 | + System vitals (CPU, memory, GPU, disk, battery, load) |
+| `essential` | 2–3 | + Activity (when active), context/usage bars |
+| **`full`** | **3–5** | **+ Session stats, token breakdown at 85%+ (default)** |
+| `vitals` | 4–6 | + System vitals (CPU, memory, GPU, disk, battery, load) |
 
 ### Switch preset
 
