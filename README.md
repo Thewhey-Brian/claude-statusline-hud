@@ -14,56 +14,54 @@ A comprehensive, btop-inspired statusline HUD plugin for Claude Code. Cross-plat
 
 **Wide (≥100 cols):**
 ```
-[Opus 4.6 (1M context) | Max] | my-project |  main ✓ ↑2 | ⚡ agent
+[Opus 4.6 (1M context) | Max] │ my-project │  main ✓ ↑2 │ ⚡ agent
 ```
 
 **Normal (70–99 cols):**
 ```
-[Opus 4.6 | Max] | my-project |  main ✓
+[Opus 4.6 | Max] │ my-project │  main ✓
 ```
 
 **Compact (<70 cols):**
 ```
-[Opus | Max] | my-project |  main ✓
+[Opus | Max] │ my-project │  main ✓
 ```
 </details>
 
 <details>
-<summary><b>essential</b> — 2 rows</summary>
+<summary><b>essential</b> — 2–3 rows</summary>
 
 **Wide (≥100 cols):**
 ```
-[Opus 4.6 (1M context) | Max] | my-project |  main [+2 ~1] ↑2
-Context ██████████ 42%  | Usage  ██░░░░░░░░ 6% (0h 18m / 5h) | ██████████ 23% (1d 14h / 7d)
+[Opus 4.6 (1M context) | Max] │ my-project │  main [+2 ~1] ↑2
+› ◐ Edit auth.ts  ✓ Read ×3  │  ▸ Fix auth bug (2/5)
+Context ██████████ 42% │ Usage  ██░░░░░░░░ 6% (0h 18m / 5h) │ ██████████ 23% (1d 14h / 7d)
 ```
 
-**Normal (70–99 cols):**
-```
-[Opus 4.6 | Max] | my-project |  main ✓
-Context ████████ 42%  | Usage  ████████ 6% (0h 18m / 5h) | ████████ 23% (1d 14h / 7d)
-```
+Activity row only shows when tools/todos/agents are active — otherwise 2 rows.
 
 **Compact (<70 cols):**
 ```
-[Opus | Max] | my-project |  main ✓
-Context ██████ 42% | 5h ██████ 6% | 7d ██████ 23%
+[Opus | Max] │ my-project │  main ✓
+Context ██████ 42% │ 5h ██████ 6% │ 7d ██████ 23%
 ```
 </details>
 
 <details open>
-<summary><b>full</b> — 3–4 rows (default)</summary>
+<summary><b>full</b> — 3–5 rows (default)</summary>
 
 **Wide (≥100 cols):**
 ```
 [Opus 4.6 (1M context) | Max] │ my-project │  main ✓ ↑2 │ ⚡ agent
-Context ██████████ 42% 45k/200k │ Usage  ██░░░░░░░░ 6% (0h 18m / 5h) │ ██████████ 23% (1d 14h / 7d)
 › ◐ Edit auth.ts  ✓ Read ×3  │  ▸ Fix auth bug (2/5)  │  ⚡ explore
+Context ██████████ 42% │ Usage  ██░░░░░░░░ 6% (0h 18m / 5h) │ ██████████ 23% (1d 14h / 7d)
 $1.31 │ ⏱ 12m 3s (api 68%) │ +142 -38 ▲ │ cache 87% │ 1k/min
 ```
 
-**At high context (85%+), token breakdown appears:**
+**At high context (85%+), a token breakdown row appears:**
 ```
-Context █████████░ 87% 174k/200k [in:30k cch:140k out:4k] ⚠
+Context █████████░ 87% ⚠ │ Usage  ...
+  tokens 179k/200k — in 30k cached 140k created 5k out 4k
 ```
 
 **Activity row only shows when tools/todos/agents are active — otherwise hidden.**
@@ -77,31 +75,23 @@ $1.31 │ ⏱ 12m 3s │ +142 -38 ▲
 </details>
 
 <details>
-<summary><b>vitals</b> — 4–5 rows</summary>
+<summary><b>vitals</b> — 4–6 rows</summary>
 
 **Wide (≥100 cols):**
 ```
 [Opus 4.6 (1M context) | Max] │ my-project │  main ✓ ↑2 │ ⚡ agent
-Context ██████████ 42% 45k/200k │ Usage  ██░░░░░░░░ 6% (0h 18m / 5h) │ ██████████ 23% (1d 14h / 7d)
 › ◐ Edit auth.ts  ✓ Read ×3  │  ▸ Fix auth bug (2/5)
+Context ██████████ 42% │ Usage  ██░░░░░░░░ 6% (0h 18m / 5h) │ ██████████ 23% (1d 14h / 7d)
 $1.31 │ ⏱ 12m 3s (api 68%) │ +142 -38 ▲ │ cache 87% │ 1k/min
 cpu ██▌  35% │ mem ███▊ 15G/16G │ gpu █    11% │ disk ▋   15G/926G │ bat ████ 80% │ load 2.41
 ```
 
-**Normal (70–99 cols):**
-```
-[Opus 4.6 | Max] | my-project |  main ✓
-Context ████████ 42%  | Usage  ████████ 6% (0h 18m / 5h) | ████████ 23% (1d 14h / 7d)
-$1.31 | ⏱ 12m 3s (api 68%) | +142 -38 ▲ | cache 87% | 1k/min
-cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11% | disk ▋   15G/926G | bat ████ 80% | load 2.41
-```
-
 **Compact (<70 cols):**
 ```
-[Opus | Max] | my-project |  main ✓
-Context ██████ 42% | 5h ██████ 6% | 7d ██████ 23%
-$1.31 | ⏱ 12m 3s | +142 -38 ▲
-cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11%
+[Opus | Max] │ my-project │  main ✓
+Context ██████ 42% │ 5h ██████ 6% │ 7d ██████ 23%
+$1.31 │ ⏱ 12m 3s │ +142 -38 ▲
+cpu ██▌  35% │ mem ███▊ 15G/16G │ gpu █    11%
 ```
 </details>
 
@@ -117,11 +107,10 @@ cpu ██▌  35% | mem ███▊ 15G/16G | gpu █    11%
 /plugin install claude-statusline-hud
 ```
 
-The plugin auto-configures on the next session start via a `SessionStart` hook. If the statusline doesn't appear, run this one-liner:
+The plugin auto-configures on the next session start via a `SessionStart` hook. If the statusline doesn't appear, run the setup script manually:
 
 ```bash
-# Manual setup (only if auto-config didn't work)
-bash ~/.claude/plugins/cache/claude-statusline-hud/claude-statusline-hud/1.1.0/scripts/setup.sh
+bash ~/.claude/plugins/cache/claude-statusline-hud/claude-statusline-hud/*/scripts/setup.sh
 ```
 
 ### Uninstall
@@ -166,7 +155,7 @@ export CLAUDE_STATUSLINE_PRESET=essential
 
 The statusline automatically adapts to your terminal width:
 
-| Width | Model label | Bar width | Usage format | Row 4 vitals |
+| Width | Model label | Bar width | Usage format | Vitals |
 |---|---|---|---|---|
 | **Wide** (≥100) | `Opus 4.6 (1M context)` | 10 chars | Full with time breakdowns | All (cpu/mem/gpu/disk/bat/load) |
 | **Normal** (70–99) | `Opus 4.6` | 8 chars | Full with time breakdowns | All |
@@ -185,23 +174,23 @@ The statusline automatically adapts to your terminal width:
 | `🌿 worktree` | Active worktree name and branch |
 | `NORMAL`/`INSERT` | Vim keybinding mode |
 
-### Row 2 — Capacity Bars
-| Element | Description |
-|---|---|
-| `Context 42% 45k/200k` | Context window fill with token counts (wide mode) |
-| `[in:30k cch:140k out:4k]` | Token breakdown at 85%+ context — input, cached, output |
-| `⚠` | Warning when tokens exceed 200k (autocompact pressure) |
-| `Usage 5h` | Rolling 5-hour rate limit with time consumed / total |
-| `Usage 7d` | Rolling 7-day rate limit with time consumed / total |
-| `syncing` | Shown when using stale data during API backoff |
-
-### Row 3 — Live Activity (conditional, only when active)
+### Row 2 — Live Activity (conditional, only when active)
 | Element | Description |
 |---|---|
 | `◐ Edit auth.ts` | Tool currently running with its target file/pattern |
 | `✓ Read ×3` | Completed tool with invocation count |
 | `▸ Fix auth bug (2/5)` | Active todo/task with completion progress |
 | `⚡ explore` | Running subagent with description |
+
+### Row 3 — Capacity Bars
+| Element | Description |
+|---|---|
+| `Context 42%` | Context window fill % with autocompact buffer estimation |
+| `⚠` | Warning when adjusted context ≥ 90% or tokens exceed 200k |
+| `Usage 5h` | Rolling 5-hour rate limit with time consumed / total |
+| `Usage 7d` | Rolling 7-day rate limit with time consumed / total |
+| `syncing` | Shown when using stale data during API backoff |
+| `tokens 179k/200k — in 30k cached 140k ...` | Separate row at 85%+ context showing token breakdown |
 
 ### Row 4 — Session Stats
 | Element | Description |
@@ -241,9 +230,10 @@ All expensive operations are cached to keep the statusline snappy:
 
 | Data source | Cache TTL | Notes |
 |---|---|---|
+| Live activity (tools/todos/agents) | 2 seconds | Parses last 100 lines of transcript JSONL |
 | System vitals (CPU/mem/GPU/disk) | 5 seconds | Single cache file, sourced as shell vars |
 | Git info (branch, dirty, ahead/behind) | 10 seconds | |
-| Rate limit API call | 30 minutes (2h after 429) | The `/api/oauth/usage` endpoint has a very low rate limit (~5 req/token). The plugin caches aggressively and falls back to stale data on errors. |
+| Rate limit API call | 5 min (exponential backoff on 429) | File lock prevents concurrent calls. Falls back to stale data with `syncing` indicator. |
 
 ## Requirements
 
@@ -260,12 +250,14 @@ claude-statusline-hud/
 │   └── claude-statusline-hud/
 │       ├── .claude-plugin/
 │       │   └── plugin.json    # Plugin manifest
+│       ├── hooks.json          # SessionStart hook for auto-setup
 │       ├── scripts/
-│       │   └── statusline.sh  # Main statusline script
-│       ├── skills/
-│       │   └── statusline/
-│       │       └── SKILL.md   # /statusline skill for preset switching
-│       └── settings.json      # Auto-configures statusLine on install
+│       │   ├── statusline.sh  # Main statusline script
+│       │   ├── setup.sh       # Post-install: injects statusLine config
+│       │   └── teardown.sh    # Post-uninstall: removes statusLine config
+│       └── skills/
+│           └── statusline/
+│               └── SKILL.md   # /statusline skill for preset switching
 ├── LICENSE
 └── README.md
 ```
@@ -273,7 +265,7 @@ claude-statusline-hud/
 ## Contributing
 
 1. Fork the repository
-2. Test locally: `claude --plugin-dir ./claude-statusline-plugin`
+2. Test locally: `claude --plugin-dir ./plugins/claude-statusline-hud`
 3. Change preset to verify: `echo "vitals" > ~/.claude/statusline-preset`
 4. Submit a PR
 
