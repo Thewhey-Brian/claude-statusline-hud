@@ -175,12 +175,33 @@ The statusline automatically adapts to your terminal width:
 | `NORMAL`/`INSERT` | Vim keybinding mode |
 
 ### Row 2 — Live Activity (conditional, only when active)
+
+Shows the last 5 tools (most recent first), parsed from the session transcript. Only appears when there's activity.
+
+**Example:**
+```
+› ◐ Edit auth.ts  ✓ Read  ✓ Bash  ✓ Grep  ✓ Read
+```
+Reading left-to-right: Edit is **running now** (`◐`), the other 4 tools already **completed** (`✓`).
+
+**Symbols:**
+| Symbol | Meaning |
+|---|---|
+| `›` | Activity row prefix |
+| `◐` | Tool currently running (no result yet) — shows first 25 chars of target |
+| `✓` | Tool completed (has a matching result) |
+| `▸` | Active todo/task in progress |
+| `⚡` | Running subagent |
+
+**Elements:**
 | Element | Description |
 |---|---|
-| `◐ Edit auth.ts` | Tool currently running with its target file/pattern |
-| `✓ Read ×3` | Completed tool with invocation count |
-| `▸ Fix auth bug (2/5)` | Active todo/task with completion progress |
-| `⚡ explore` | Running subagent with description |
+| `◐ Edit auth.ts` | File edit in progress — shows filename |
+| `◐ Bash git status` | Bash command running — shows first 25 chars |
+| `◐ Grep pattern` | Search running — shows pattern |
+| `✓ Read` | File read completed |
+| `▸ Fix auth bug (2/5)` | Active todo, 2 of 5 tasks done |
+| `⚡ explore` | Subagent running with its description |
 
 ### Row 3 — Capacity Bars
 | Element | Description |
