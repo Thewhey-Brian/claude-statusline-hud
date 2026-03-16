@@ -10,7 +10,7 @@
     {
       "name": "claude-statusline-hud",
       "description": "Comprehensive statusline HUD with context, rate limits, session stats, system vitals, and configurable presets (minimal/essential/full/vitals).",
-      "version": "1.0.0",
+      "version": "1.3.0",
       "source": "./plugins/claude-statusline-hud",
       "author": {
         "name": "Xinyu Guo"

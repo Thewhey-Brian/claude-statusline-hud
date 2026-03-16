@@ -80,19 +80,28 @@ BLUE=$'\033[34m'    MAGENTA=$'\033[35m' WHITE=$'\033[97m'
 RST=$'\033[0m'      BOLD=$'\033[1m'     DIM=$'\033[2m'     ITAL=$'\033[3m'
 BG_YELLOW=$'\033[43m'
 
-# --- UTF-8 detection: fall back to ASCII on non-UTF-8 terminals ---
-USE_UNICODE=1
-case "${LANG:-}${LC_ALL:-}${LC_CTYPE:-}" in
-  *UTF-8*|*utf-8*|*utf8*) USE_UNICODE=1 ;;
-  *) # Test if terminal can render Unicode
-    if printf '█' 2>/dev/null | grep -q '█' 2>/dev/null; then USE_UNICODE=1
-    else USE_UNICODE=0; fi ;;
-esac
+# --- UTF-8 detection ---
+# Override: set CLAUDE_SL_ASCII=1 to force ASCII bars, or CLAUDE_SL_UNICODE=1 to force Unicode.
+# Default: check locale vars. Hook subprocesses often lack locale, so also check parent shell.
+if [ "${CLAUDE_SL_ASCII:-}" = "1" ]; then
+  USE_UNICODE=0
+elif [ "${CLAUDE_SL_UNICODE:-}" = "1" ]; then
+  USE_UNICODE=1
+else
+  USE_UNICODE=0
+  # Check all locale sources — hooks may inherit from parent or have none
+  _LOCALE="${LANG:-}${LC_ALL:-}${LC_CTYPE:-}${LANGUAGE:-}"
+  case "$_LOCALE" in
+    *UTF-8*|*utf-8*|*utf8*|*UTF8*) USE_UNICODE=1 ;;
+  esac
+  # macOS almost always supports Unicode even without locale vars
+  is_mac && USE_UNICODE=1
+fi
 
 if [ "$USE_UNICODE" = "1" ]; then
-  BAR_FILL="█" BAR_EMPTY="░" SEP_CHAR="│"
+  BAR_FILL="█" BAR_EMPTY="░" SEP_CHAR="│" DOT_SEP="·"
 else
-  BAR_FILL="#" BAR_EMPTY="-" SEP_CHAR="|"
+  BAR_FILL="#" BAR_EMPTY="-" SEP_CHAR="|" DOT_SEP="."
 fi
 
 SEP=" ${DIM}${SEP_CHAR}${RST} "
@@ -217,11 +226,17 @@ if [ -n "$DIR" ]; then
   fi
 fi
 
-# --- Badges ---
+# --- Badges (truncate long names to prevent overflow) ---
 BADGES=""
 [ -n "$VIM_MODE" ] && BADGES="${BADGES}${SEP}${BOLD}${BLUE}${VIM_MODE}${RST}"
-[ -n "$AGENT_NAME" ] && BADGES="${BADGES}${SEP}${BOLD}${CYAN}⚡ ${AGENT_NAME}${RST}"
-[ -n "$WT_NAME" ] && BADGES="${BADGES}${SEP}${DIM}🌿 ${WT_NAME}${WT_BRANCH:+→${WT_BRANCH}}${RST}"
+if [ -n "$AGENT_NAME" ]; then
+  AGENT_TRUNC="${AGENT_NAME:0:15}"
+  BADGES="${BADGES}${SEP}${BOLD}${CYAN}⚡ ${AGENT_TRUNC}${RST}"
+fi
+if [ -n "$WT_NAME" ]; then
+  WT_TRUNC="${WT_NAME:0:15}"
+  BADGES="${BADGES}${SEP}${DIM}🌿 ${WT_TRUNC}${WT_BRANCH:+→${WT_BRANCH}}${RST}"
+fi
 
 # =============================================================
 # ROW 1: [Model | Max] │ Dir │ Git │ Badges     [ALL PRESETS]
