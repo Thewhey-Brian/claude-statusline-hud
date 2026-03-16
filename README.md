@@ -32,8 +32,8 @@ $1.31 | ⏱ 12m 3s | +142 -38 ▲
 ## Install
 
 ```bash
-# As a Claude Code plugin
-claude plugin install claude-statusline-hud
+# Install from GitHub
+claude plugin install Thewhey-Brian/claude-statusline-hud
 
 # Or test locally
 claude --plugin-dir /path/to/claude-statusline-plugin
