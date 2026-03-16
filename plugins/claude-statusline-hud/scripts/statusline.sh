@@ -5,8 +5,8 @@
 #  Presets (set via CLAUDE_STATUSLINE_PRESET or ~/.claude/statusline-preset):
 #
 #    minimal   — 1 row:  [Model | Max]  Dir  Git
-#    essential — 2 rows: + Context bar, Rate-limit bars
-#    full      — 3–4 rows: + Activity (when active), Stats  (default)
+#    essential — 2 rows: + Activity (when active), Context/Usage bars
+#    full      — 3–4 rows: + Stats (cost, duration, lines, etc.)  (default)
 #    vitals    — 4–5 rows: + System vitals (CPU, Mem, GPU, Disk, Battery)
 # ================================================================
 
@@ -210,12 +210,73 @@ printf '%b\n' "$R1"
 [ "$PRESET" = "minimal" ] && exit 0
 
 # =============================================================
-# ROW 2: Context bar [token breakdown] │ Usage bars  [ESSENTIAL+]
+# ROW 2 (conditional): Live Activity — Tools │ Todos │ Agents
+#   Shown when there's active work. Parsed from transcript.
+#   Cached 2s. Appears in ESSENTIAL+ presets.
+# =============================================================
+
+ACTIVITY_CACHE="/tmp/.claude_sl_activity"
+ACTIVITY_LINE=""
+
+if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  if [ "$(file_age "$ACTIVITY_CACHE")" -lt 2 ]; then
+    ACTIVITY_LINE=$(cat "$ACTIVITY_CACHE")
+  else
+    ACTIVITY_LINE=$(tail -100 "$TRANSCRIPT" 2>/dev/null | jq -rs '
+      [.[] | select(.type == "tool_use" or .type == "tool_result")] as $events |
+      (reduce $events[] as $e ({};
+        if $e.type == "tool_use" then
+          .[$e.id] = {name: $e.name, target: (
+            if ($e.name == "Edit" or $e.name == "Write" or $e.name == "Read") then
+              ($e.input.file_path // "" | split("/") | last)
+            elif ($e.name == "Grep" or $e.name == "Glob") then
+              ($e.input.pattern // "")[0:20]
+            elif $e.name == "Bash" then
+              ($e.input.command // "")[0:25]
+            elif $e.name == "Agent" then
+              ($e.input.description // "agent")
+            else "" end
+          ), done: false}
+        elif $e.type == "tool_result" then
+          .[$e.tool_use_id].done = true
+        else . end
+      )) as $tools |
+      ([$tools | to_entries | .[-5:] | reverse[] |
+        if .value.done then "✓ " + .value.name
+        else "◐ " + .value.name + (if .value.target != "" then " " + .value.target else "" end) end
+      ] | join("  ")) as $tool_str |
+      [.[] | select(.type == "tool_use" and (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate"))] as $todo_events |
+      (if ($todo_events | length) > 0 then
+        ($todo_events | last) as $last_todo |
+        if $last_todo.name == "TodoWrite" then
+          ($last_todo.input.todos // []) as $todos |
+          ([$todos[] | select(.status == "completed")] | length) as $done |
+          ([$todos[] | select(.status == "in_progress")] | first // null) as $current |
+          if $current then "▸ " + ($current.content // "task")[0:30] + " (" + ($done|tostring) + "/" + ($todos|length|tostring) + ")"
+          elif ($todos | length) > 0 then "✓ todos " + ($done|tostring) + "/" + ($todos|length|tostring)
+          else "" end
+        else "" end
+      else "" end) as $todo_str |
+      ([$tools | to_entries[] | select(.value.name == "Agent" and .value.done == false)] |
+        if length > 0 then (first | "⚡ " + .value.target) else "" end
+      ) as $agent_str |
+      [[$tool_str, $todo_str, $agent_str] | .[] | select(length > 0)] | join("  │  ")
+    ' 2>/dev/null)
+    printf '%s' "$ACTIVITY_LINE" > "$ACTIVITY_CACHE"
+  fi
+fi
+
+if [ -n "$ACTIVITY_LINE" ]; then
+  printf '%b\n' "${DIM}›${RST} ${ACTIVITY_LINE}"
+fi
+
+# =============================================================
+# ROW 3: Context bar │ Usage bars                   [ESSENTIAL+]
 # =============================================================
 
 # --- Autocompact buffer estimation ---
-# When context is high, the actual pressure is higher than reported
-# because autocompact adds overhead. Inflate by ~10% above 70%.
+# Inflate by ~10% above 70% to reflect true context pressure.
+TOTAL_INPUT=$((INPUT_TOK + CACHE_CREATE + CACHE_READ))
 ADJ_PCT=$PCT
 if [ "$PCT" -ge 70 ] 2>/dev/null; then
   ADJ_PCT=$(( PCT + (PCT - 70) * 10 / 30 ))
@@ -224,23 +285,14 @@ fi
 
 CTX_CLR=$(bar_color "$ADJ_PCT")
 CTX_BAR=$(make_bar "$ADJ_PCT" "$BAR_W")
+
+# --- Context warning: ⚠ when exceeds 200k OR adjusted PCT ≥ 90% ---
 CTX_WARN=""
-[ "$EXCEEDS_200K" = "true" ] && CTX_WARN=" ${BOLD}${BG_YELLOW} ⚠ ${RST}"
-
-# --- Token breakdown at high context (85%+) ---
-TOK_DETAIL=""
-TOTAL_INPUT=$((INPUT_TOK + CACHE_CREATE + CACHE_READ))
-if [ "$PCT" -ge 85 ] 2>/dev/null && [ "$TOTAL_INPUT" -gt 0 ] && [ "$TIER" != "compact" ]; then
-  TOK_DETAIL=" ${DIM}[in:$(fmt_tok $INPUT_TOK) cch:$(fmt_tok $CACHE_READ) out:$(fmt_tok $TOTAL_OUT)]${RST}"
+if [ "$EXCEEDS_200K" = "true" ] || [ "$ADJ_PCT" -ge 90 ] 2>/dev/null; then
+  CTX_WARN=" ${BOLD}${BG_YELLOW} ⚠ ${RST}"
 fi
 
-# --- Context display: % + optional tokens ---
-if [ "$TIER" = "wide" ] && [ "$TOTAL_INPUT" -gt 0 ]; then
-  CTX_TOTAL=$((TOTAL_INPUT + TOTAL_OUT))
-  CTX_LABEL="${BOLD}${PCT}%${RST} ${DIM}$(fmt_tok $CTX_TOTAL)/$(fmt_tok $CTX_SIZE)${RST}"
-else
-  CTX_LABEL="${BOLD}${PCT}%${RST}"
-fi
+CTX_LABEL="${BOLD}${PCT}%${RST}"
 
 # ---- Rate limit: token discovery ----
 USAGE_CACHE="/tmp/.claude_sl_usage"
@@ -351,96 +403,17 @@ else
   else RL_DISPLAY="${DIM}Usage${RST}  ${YELLOW}${BOLD}--${RST} ${DIM}(${RL_ERR:-unavailable})${RST}"; fi
 fi
 
-R2="${DIM}Context${RST} ${CTX_CLR}${CTX_BAR}${RST} ${CTX_LABEL}${TOK_DETAIL}${CTX_WARN}"
-R2="${R2}${SEP}${RL_DISPLAY}"
-printf '%b\n' "$R2"
+R3="${DIM}Context${RST} ${CTX_CLR}${CTX_BAR}${RST} ${CTX_LABEL}${CTX_WARN}"
+R3="${R3}${SEP}${RL_DISPLAY}"
+printf '%b\n' "$R3"
+
+# --- Token breakdown row (conditional): shown at 85%+ context ---
+if [ "$PCT" -ge 85 ] 2>/dev/null && [ "$TOTAL_INPUT" -gt 0 ] && [ "$TIER" != "compact" ]; then
+  CTX_TOTAL=$((TOTAL_INPUT + TOTAL_OUT))
+  printf '%b\n' "  ${DIM}tokens${RST} $(fmt_tok $CTX_TOTAL)/$(fmt_tok $CTX_SIZE) ${DIM}—${RST} ${DIM}in${RST} ${BOLD}$(fmt_tok $INPUT_TOK)${RST} ${DIM}cached${RST} ${GREEN}${BOLD}$(fmt_tok $CACHE_READ)${RST} ${DIM}created${RST} ${YELLOW}$(fmt_tok $CACHE_CREATE)${RST} ${DIM}out${RST} ${BOLD}$(fmt_tok $TOTAL_OUT)${RST}"
+fi
 
 [ "$PRESET" = "essential" ] && exit 0
-
-# =============================================================
-# ROW 3 (conditional): Live Activity — Tools │ Todos │ Agents
-#   Only shown when there's active work. Parsed from transcript.
-#   Cached 2s to keep performance snappy.                [FULL+]
-# =============================================================
-
-ACTIVITY_CACHE="/tmp/.claude_sl_activity"
-ACTIVITY_LINE=""
-
-if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-  if [ "$(file_age "$ACTIVITY_CACHE")" -lt 2 ]; then
-    ACTIVITY_LINE=$(cat "$ACTIVITY_CACHE")
-  else
-    # Parse last 100 lines of transcript JSONL for tools, todos, agents
-    ACTIVITY_LINE=$(tail -100 "$TRANSCRIPT" 2>/dev/null | jq -rs '
-      # --- Tools: find recent tool_use and match with tool_result ---
-      [.[] | select(.type == "tool_use" or .type == "tool_result")] as $events |
-
-      # Build tool status map
-      (reduce $events[] as $e ({};
-        if $e.type == "tool_use" then
-          .[$e.id] = {name: $e.name, target: (
-            if ($e.name == "Edit" or $e.name == "Write" or $e.name == "Read") then
-              ($e.input.file_path // "" | split("/") | last)
-            elif ($e.name == "Grep" or $e.name == "Glob") then
-              ($e.input.pattern // "")[0:20]
-            elif $e.name == "Bash" then
-              ($e.input.command // "")[0:25]
-            elif $e.name == "Agent" then
-              ($e.input.description // "agent")
-            else ""
-            end
-          ), done: false}
-        elif $e.type == "tool_result" then
-          .[$e.tool_use_id].done = true
-        else . end
-      )) as $tools |
-
-      # Last 5 tools, most recent first
-      ([$tools | to_entries | .[-5:] | reverse[] |
-        if .value.done then
-          "✓ " + .value.name
-        else
-          "◐ " + .value.name + (if .value.target != "" then " " + .value.target else "" end)
-        end
-      ] | join("  ")) as $tool_str |
-
-      # --- Todos: find most recent TodoWrite/TaskCreate/TaskUpdate ---
-      [.[] | select(.type == "tool_use" and (.name == "TodoWrite" or .name == "TaskCreate" or .name == "TaskUpdate"))] as $todo_events |
-      (if ($todo_events | length) > 0 then
-        ($todo_events | last) as $last_todo |
-        if $last_todo.name == "TodoWrite" then
-          ($last_todo.input.todos // []) as $todos |
-          ([$todos[] | select(.status == "completed")] | length) as $done |
-          ([$todos[] | select(.status == "in_progress")] | first // null) as $current |
-          if $current then
-            "▸ " + ($current.content // "task")[0:30] + " (" + ($done|tostring) + "/" + ($todos|length|tostring) + ")"
-          elif ($todos | length) > 0 then
-            "✓ todos " + ($done|tostring) + "/" + ($todos|length|tostring)
-          else ""
-          end
-        else ""
-        end
-      else "" end) as $todo_str |
-
-      # --- Agents: find running Agent tool_use without tool_result ---
-      ([$tools | to_entries[] | select(.value.name == "Agent" and .value.done == false)] |
-        if length > 0 then
-          (first | "⚡ " + .value.target)
-        else "" end
-      ) as $agent_str |
-
-      # Combine non-empty parts
-      [[$tool_str, $todo_str, $agent_str] | .[] | select(length > 0)] | join("  │  ")
-    ' 2>/dev/null)
-
-    printf '%s' "$ACTIVITY_LINE" > "$ACTIVITY_CACHE"
-  fi
-fi
-
-# Only print activity row if there's content
-if [ -n "$ACTIVITY_LINE" ]; then
-  printf '%b\n' "${DIM}›${RST} ${ACTIVITY_LINE}"
-fi
 
 # =============================================================
 # ROW 4: Stats — Cost │ Duration │ Lines │ Cache │ Speed  [FULL+]
