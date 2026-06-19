@@ -189,7 +189,7 @@ The statusline automatically adapts to your terminal width:
 ### Row 1 — Identity & Location
 | Element | Description |
 |---|---|
-| `[Model \| Max]` | Active model name and subscription plan |
+| `[Model \| Max]` | Active model name and auto-detected subscription plan (`Max`/`Pro`/`Free`/`Team`/`Enterprise`/`Business`) |
 | `Dir` | Current working directory (`~` for home) |
 | ` branch` | Git branch with dirty status (`+staged ~unstaged ?untracked`) |
 | `↑↓` | Commits ahead of / behind remote |
@@ -235,6 +235,7 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 | `⚠` | Warning when adjusted context ≥ 90% or tokens exceed 200k |
 | `Usage 5h` | Rolling 5-hour rate limit with time consumed / total |
 | `Usage 7d` | Rolling 7-day rate limit with time consumed / total |
+| `Credits` | Credit-based accounts (Team/Enterprise/Business) show used / total credit limit instead of rate-limit bars (auto-detected) |
 | `syncing` | Shown when using stale data during API backoff |
 | `tokens 179k/200k — in 30k cached 140k ...` | Separate row at 85%+ context showing token breakdown |
 

@@ -183,6 +183,60 @@ file_age() {
 NOW=$(date +%s)
 
 # =============================================
+# ACCOUNT / PLAN DETECTION (cached 1h)
+#   Reads claudeAiOauth.subscriptionType from the same
+#   credential sources used for the usage token. Business/
+#   team/enterprise plans are credit-based and tracked by
+#   total credit limit instead of rate-limit utilization.
+# =============================================
+PLAN_CACHE="/tmp/.claude_sl_plan"
+
+get_subscription_type() {
+  local st="" cred_json=""
+  if is_mac; then
+    for svc in "Claude Code-credentials" "claude-code-credentials" "Claude-credentials"; do
+      cred_json=$(security find-generic-password -s "$svc" -w 2>/dev/null)
+      [ -z "$cred_json" ] && continue
+      st=$(printf '%s' "$cred_json" | jq -r '.claudeAiOauth.subscriptionType // empty' 2>/dev/null)
+      [ -n "$st" ] && { printf '%s' "$st"; return 0; }
+    done
+  fi
+  for cred_file in "$HOME/.claude/.credentials.json" "$HOME/.claude/credentials.json" \
+    "$HOME/.config/claude/credentials.json" "${XDG_CONFIG_HOME:-$HOME/.config}/claude-code/credentials.json"; do
+    if [ -f "$cred_file" ]; then
+      st=$(jq -r '.claudeAiOauth.subscriptionType // empty' "$cred_file" 2>/dev/null)
+      [ -n "$st" ] && { printf '%s' "$st"; return 0; }
+    fi
+  done
+  [ -n "${CLAUDE_PLAN:-}" ] && { printf '%s' "$CLAUDE_PLAN"; return 0; }
+  return 1
+}
+
+# Resolve plan with a 1h cache to avoid hitting the keychain every render.
+PLAN_RAW=""
+if [ -n "${CLAUDE_PLAN:-}" ]; then
+  PLAN_RAW="$CLAUDE_PLAN"
+elif [ "$(file_age "$PLAN_CACHE")" -lt 3600 ]; then
+  PLAN_RAW=$(cat "$PLAN_CACHE" 2>/dev/null)
+else
+  PLAN_RAW=$(get_subscription_type)
+  [ -n "$PLAN_RAW" ] && printf '%s' "$PLAN_RAW" > "$PLAN_CACHE"
+fi
+
+# Pretty label + business detection.
+PLAN_LABEL=""; ACCOUNT_IS_BUSINESS=0
+case "$(printf '%s' "$PLAN_RAW" | tr '[:upper:]' '[:lower:]')" in
+  max*)        PLAN_LABEL="Max" ;;
+  pro*)        PLAN_LABEL="Pro" ;;
+  free*)       PLAN_LABEL="Free" ;;
+  team*)       PLAN_LABEL="Team"; ACCOUNT_IS_BUSINESS=1 ;;
+  enterprise*) PLAN_LABEL="Enterprise"; ACCOUNT_IS_BUSINESS=1 ;;
+  business*)   PLAN_LABEL="Business"; ACCOUNT_IS_BUSINESS=1 ;;
+  "")          PLAN_LABEL="" ;;
+  *)           PLAN_LABEL=$(printf '%s' "$PLAN_RAW" | awk '{print toupper(substr($0,1,1)) substr($0,2)}') ;;
+esac
+
+# =============================================
 # GIT INFO (cached 10s)
 # =============================================
 GIT_DISPLAY=""
@@ -248,7 +302,11 @@ fi
 # =============================================================
 # ROW 1: [Model | Max] │ Dir │ Git │ Badges │ Update  [ALL]
 # =============================================================
-R1="${BOLD}${CYAN}[${MODEL_LABEL} | Max]${RST}"
+if [ -n "$PLAN_LABEL" ]; then
+  R1="${BOLD}${CYAN}[${MODEL_LABEL} | ${PLAN_LABEL}]${RST}"
+else
+  R1="${BOLD}${CYAN}[${MODEL_LABEL}]${RST}"
+fi
 R1="${R1}${SEP}${BOLD}${GREEN}${DIR_NAME}${RST}"
 [ -n "$GIT_DISPLAY" ] && R1="${R1}${SEP}${GIT_DISPLAY}"
 [ -n "$BADGES" ] && R1="${R1}${BADGES}"
@@ -448,7 +506,34 @@ RL_DISPLAY=""
 SYNC_TAG=""
 [ "$RL_SYNCING" = "1" ] && SYNC_TAG=" ${DIM}${ITAL}syncing${RST}"
 
+cur_sym() { case "$1" in USD) printf '$';; EUR) printf '€';; GBP) printf '£';; *) printf '%s ' "${1:-$}";; esac; }
+
 if [ -n "$USAGE_JSON" ]; then
+  # ---- Credit-based (business/team/enterprise) accounts ----
+  SPEND_LIMIT_MINOR=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.limit.amount_minor // 0')
+  FIVE_NULL=$(printf '%s' "$USAGE_JSON" | jq -r 'if .five_hour == null then "1" else "0" end')
+  if [ "$SPEND_LIMIT_MINOR" != "0" ] && [ "$SPEND_LIMIT_MINOR" != "null" ] \
+     && { [ "$ACCOUNT_IS_BUSINESS" = "1" ] || [ "$FIVE_NULL" = "1" ]; }; then
+    SP_USED_MINOR=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.used.amount_minor // 0')
+    SP_EXP=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.limit.exponent // 2')
+    SP_CUR=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.limit.currency // "USD"')
+    SP_PCT=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.percent // 0' | cut -d. -f1)
+    SYM=$(cur_sym "$SP_CUR")
+    SP_USED=$(awk -v m="$SP_USED_MINOR" -v e="$SP_EXP" 'BEGIN{printf "%.*f", e, m/(10^e)}')
+    SP_LIM=$(awk -v m="$SPEND_LIMIT_MINOR" -v e="$SP_EXP" 'BEGIN{printf "%.*f", e, m/(10^e)}')
+    SP_CLR=$(bar_color "$SP_PCT"); SP_BAR=$(make_bar "$SP_PCT" "$RL_BAR_W")
+    if [ "$TIER" = "compact" ]; then
+      RL_DISPLAY="${DIM}Cr${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SYM}${SP_USED}/${SYM}${SP_LIM}${RST}${SYNC_TAG}"
+    else
+      RL_DISPLAY="${DIM}Credits${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SP_PCT}%${RST} ${DIM}(${SYM}${SP_USED} / ${SYM}${SP_LIM})${RST}${SYNC_TAG}"
+    fi
+    SKIP_UTIL=1   # RL_DISPLAY set; shared print below emits it
+  fi
+fi
+
+if [ -n "${SKIP_UTIL:-}" ]; then
+  :   # credit display already built above
+elif [ -n "$USAGE_JSON" ]; then
   U5=$(printf '%s' "$USAGE_JSON" | jq -r '.five_hour.utilization // 0' | cut -d. -f1)
   U5_CLR=$(bar_color "$U5"); U5_BAR=$(make_bar "$U5" "$RL_BAR_W")
   U5_TOTAL_MIN=$((U5 * 300 / 100)); U5_H=$((U5_TOTAL_MIN / 60)); U5_M=$((U5_TOTAL_MIN % 60))
