@@ -557,17 +557,16 @@ elif [ -n "$USAGE_JSON" ]; then
   U7_CLR=$(bar_color "$U7"); U7_BAR=$(make_bar "$U7" "$RL_BAR_W")
   U7_TOTAL_H=$((U7 * 168 / 100)); U7_D=$((U7_TOTAL_H / 24)); U7_H=$((U7_TOTAL_H % 24))
   U7_RESET=$(fmt_reset seven_day)
+  # Compact: window label + bar + % + reset (↺). The % already conveys
+  # consumption, so we show reset time instead of consumed/window for brevity.
+  if [ "$USE_UNICODE" = "1" ]; then RICON="↺"; else RICON="r:"; fi
+  U5_RT=""; U7_RT=""
+  [ -n "$U5_RESET" ] && U5_RT=" ${DIM}${RICON}${U5_RESET}${RST}"
+  [ -n "$U7_RESET" ] && U7_RT=" ${DIM}${RICON}${U7_RESET}${RST}"
   if [ "$TIER" = "compact" ]; then
-    U5_RT=""; U7_RT=""
-    if [ "$USE_UNICODE" = "1" ]; then RICON="↺"; else RICON="r"; fi
-    [ -n "$U5_RESET" ] && U5_RT=" ${DIM}${RICON}${U5_RESET}${RST}"
-    [ -n "$U7_RESET" ] && U7_RT=" ${DIM}${RICON}${U7_RESET}${RST}"
     RL_DISPLAY="${DIM}5h${RST} ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST}${U5_RT}${SEP}${DIM}7d${RST} ${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST}${U7_RT}${SYNC_TAG}"
   else
-    U5_RT=""; U7_RT=""
-    [ -n "$U5_RESET" ] && U5_RT=" ${DIM}· resets ${U5_RESET}${RST}"
-    [ -n "$U7_RESET" ] && U7_RT=" ${DIM}· resets ${U7_RESET}${RST}"
-    RL_DISPLAY="${DIM}Usage${RST}  ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST} ${DIM}(${U5_H}h ${U5_M}m / 5h${RST}${U5_RT}${DIM})${RST}${SEP}${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST} ${DIM}(${U7_D}d ${U7_H}h / 7d${RST}${U7_RT}${DIM})${RST}${SYNC_TAG}"
+    RL_DISPLAY="${DIM}Usage${RST}  ${DIM}5h${RST} ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST}${U5_RT}${SEP}${DIM}7d${RST} ${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST}${U7_RT}${SYNC_TAG}"
   fi
 else
   if [ "$TIER" = "compact" ]; then RL_DISPLAY="${DIM}usage ${YELLOW}--${RST}"
