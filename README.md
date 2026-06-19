@@ -121,18 +121,32 @@ bash ~/.claude/plugins/cache/claude-statusline-hud/claude-statusline-hud/*/scrip
 
 ### Update
 
-The plugin checks for updates on each session start. If a newer version is available, you'll see a yellow **↑ v1.3.0** badge on Row 1. To update:
+The plugin checks for updates on each session start. If a newer version is available, you'll see a yellow **↑ v1.4.0** badge on Row 1. To update:
 
 ```bash
 # Step 1: Fetch latest catalog
 /plugin marketplace update claude-statusline-hud
 
-# Step 2: Reinstall
+# Step 2: Reinstall the plugin
 /plugin uninstall claude-statusline-hud
 /plugin install claude-statusline-hud
 ```
 
 Then restart your Claude Code session.
+
+Verify that Claude is using the newly installed script:
+
+```bash
+jq -r '.statusLine.command' ~/.claude/settings.json
+jq -r '.plugins["claude-statusline-hud@claude-statusline-hud"][0] | [.version, .installPath, .gitCommitSha] | @tsv' ~/.claude/plugins/installed_plugins.json
+```
+
+If the statusline still points at an older cache path, rerun setup from the latest installed version:
+
+```bash
+bash "$(ls -d ~/.claude/plugins/cache/claude-statusline-hud/claude-statusline-hud/* | sort -V | tail -n 1)/scripts/setup.sh"
+rm -f /tmp/.claude_sl_update_available
+```
 
 > **Note:** Plugins don't auto-update in Claude Code. You need to manually reinstall to get new versions.
 
