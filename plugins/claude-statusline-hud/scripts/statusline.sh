@@ -531,19 +531,43 @@ if [ -n "$USAGE_JSON" ]; then
   fi
 fi
 
+# seconds-until-reset from an ISO8601 resets_at string -> "Xd Yh"/"Xh Ym"/"Xm".
+# Handles fractional seconds and a +00:00 / Z UTC suffix. Empty if unavailable.
+fmt_reset() {
+  local secs; secs=$(printf '%s' "$USAGE_JSON" | jq -r --arg p "$1" '
+    (.[$p].resets_at // "") as $r
+    | if ($r | type) == "string" and ($r | length) > 0
+      then (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now)
+      else -1 end | floor' 2>/dev/null)
+  [ -z "$secs" ] && return; [ "$secs" -lt 0 ] 2>/dev/null && return
+  local d=$((secs/86400)) h=$(((secs%86400)/3600)) m=$(((secs%3600)/60))
+  if   [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
+  else printf '%dm' "$m"; fi
+}
+
 if [ -n "${SKIP_UTIL:-}" ]; then
   :   # credit display already built above
 elif [ -n "$USAGE_JSON" ]; then
   U5=$(printf '%s' "$USAGE_JSON" | jq -r '.five_hour.utilization // 0' | cut -d. -f1)
   U5_CLR=$(bar_color "$U5"); U5_BAR=$(make_bar "$U5" "$RL_BAR_W")
   U5_TOTAL_MIN=$((U5 * 300 / 100)); U5_H=$((U5_TOTAL_MIN / 60)); U5_M=$((U5_TOTAL_MIN % 60))
+  U5_RESET=$(fmt_reset five_hour)
   U7=$(printf '%s' "$USAGE_JSON" | jq -r '.seven_day.utilization // 0' | cut -d. -f1)
   U7_CLR=$(bar_color "$U7"); U7_BAR=$(make_bar "$U7" "$RL_BAR_W")
   U7_TOTAL_H=$((U7 * 168 / 100)); U7_D=$((U7_TOTAL_H / 24)); U7_H=$((U7_TOTAL_H % 24))
+  U7_RESET=$(fmt_reset seven_day)
   if [ "$TIER" = "compact" ]; then
-    RL_DISPLAY="${DIM}5h${RST} ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST}${SEP}${DIM}7d${RST} ${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST}${SYNC_TAG}"
+    U5_RT=""; U7_RT=""
+    if [ "$USE_UNICODE" = "1" ]; then RICON="↺"; else RICON="r"; fi
+    [ -n "$U5_RESET" ] && U5_RT=" ${DIM}${RICON}${U5_RESET}${RST}"
+    [ -n "$U7_RESET" ] && U7_RT=" ${DIM}${RICON}${U7_RESET}${RST}"
+    RL_DISPLAY="${DIM}5h${RST} ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST}${U5_RT}${SEP}${DIM}7d${RST} ${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST}${U7_RT}${SYNC_TAG}"
   else
-    RL_DISPLAY="${DIM}Usage${RST}  ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST} ${DIM}(${U5_H}h ${U5_M}m / 5h)${RST}${SEP}${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST} ${DIM}(${U7_D}d ${U7_H}h / 7d)${RST}${SYNC_TAG}"
+    U5_RT=""; U7_RT=""
+    [ -n "$U5_RESET" ] && U5_RT=" ${DIM}· resets ${U5_RESET}${RST}"
+    [ -n "$U7_RESET" ] && U7_RT=" ${DIM}· resets ${U7_RESET}${RST}"
+    RL_DISPLAY="${DIM}Usage${RST}  ${U5_CLR}${U5_BAR}${RST} ${BOLD}${U5}%${RST} ${DIM}(${U5_H}h ${U5_M}m / 5h${RST}${U5_RT}${DIM})${RST}${SEP}${U7_CLR}${U7_BAR}${RST} ${BOLD}${U7}%${RST} ${DIM}(${U7_D}d ${U7_H}h / 7d${RST}${U7_RT}${DIM})${RST}${SYNC_TAG}"
   fi
 else
   if [ "$TIER" = "compact" ]; then RL_DISPLAY="${DIM}usage ${YELLOW}--${RST}"
