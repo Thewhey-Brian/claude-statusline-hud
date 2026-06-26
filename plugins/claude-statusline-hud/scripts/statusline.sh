@@ -37,7 +37,6 @@ j() { printf '%s' "$input" | jq -r "$1"; }
 
 MODEL=$(j '.model.display_name // "Unknown"')
 DIR=$(j '.workspace.current_dir // ""')
-PCT=$(j '.context_window.used_percentage // 0 | floor')
 COST_RAW=$(j '.cost.total_cost_usd // 0')
 DURATION_MS=$(j '.cost.total_duration_ms // 0 | floor')
 API_MS=$(j '.cost.total_api_duration_ms // 0 | floor')
@@ -54,6 +53,7 @@ CACHE_READ=$(j '.context_window.current_usage.cache_read_input_tokens // 0')
 TOTAL_OUT=$(j '.context_window.total_output_tokens // 0')
 TRANSCRIPT=$(j '.transcript_path // ""')
 CTX_SIZE=$(j '.context_window.context_window_size // 200000')
+MAX_OUT=$(j '.context_window.max_output_tokens // 20000')
 
 # --- Smart directory name ---
 if [ "$DIR" = "$HOME" ]; then DIR_NAME="~"
@@ -394,21 +394,24 @@ fi
 # ROW 3: Context bar │ Usage bars                   [ESSENTIAL+]
 # =============================================================
 
-# --- Autocompact buffer estimation ---
-# Inflate by ~10% above 70% to reflect true context pressure.
+# --- Autocompact buffer: align with Claude Code's own context % ---
+# Claude Code uses an effective window of context_window_size - min(max_output, 20000).
+# Compute the real pressure from raw usage instead of using used_percentage.
+BUFFER=$MAX_OUT
+[ "$BUFFER" -gt 20000 ] && BUFFER=20000
+EFFECTIVE_CTX=$((CTX_SIZE - BUFFER))
+[ "$EFFECTIVE_CTX" -lt 1 ] && EFFECTIVE_CTX=$CTX_SIZE
+
 TOTAL_INPUT=$((INPUT_TOK + CACHE_CREATE + CACHE_READ))
-ADJ_PCT=$PCT
-if [ "$PCT" -ge 70 ] 2>/dev/null; then
-  ADJ_PCT=$(( PCT + (PCT - 70) * 10 / 30 ))
-  [ "$ADJ_PCT" -gt 100 ] && ADJ_PCT=100
-fi
+PCT=$(( TOTAL_INPUT * 100 / EFFECTIVE_CTX ))
+[ "$PCT" -gt 100 ] && PCT=100
 
-CTX_CLR=$(bar_color "$ADJ_PCT")
-CTX_BAR=$(make_bar "$ADJ_PCT" "$BAR_W")
+CTX_CLR=$(bar_color "$PCT")
+CTX_BAR=$(make_bar "$PCT" "$BAR_W")
 
-# --- Context warning: ⚠ when exceeds 200k OR adjusted PCT ≥ 90% ---
+# --- Context warning: ⚠ when exceeds 200k OR effective PCT ≥ 90% ---
 CTX_WARN=""
-if [ "$EXCEEDS_200K" = "true" ] || [ "$ADJ_PCT" -ge 90 ] 2>/dev/null; then
+if [ "$EXCEEDS_200K" = "true" ] || [ "$PCT" -ge 90 ] 2>/dev/null; then
   CTX_WARN=" ${BOLD}${BG_YELLOW} ⚠ ${RST}"
 fi
 
@@ -580,7 +583,7 @@ printf '%b\n' "$R3"
 # --- Token breakdown row (conditional): shown at 85%+ context ---
 if [ "$PCT" -ge 85 ] 2>/dev/null && [ "$TOTAL_INPUT" -gt 0 ] && [ "$TIER" != "compact" ]; then
   CTX_TOTAL=$((TOTAL_INPUT + TOTAL_OUT))
-  printf '%b\n' "  ${DIM}tokens${RST} $(fmt_tok $CTX_TOTAL)/$(fmt_tok $CTX_SIZE) ${DIM}—${RST} ${DIM}in${RST} ${BOLD}$(fmt_tok $INPUT_TOK)${RST} ${DIM}cached${RST} ${GREEN}${BOLD}$(fmt_tok $CACHE_READ)${RST} ${DIM}created${RST} ${YELLOW}$(fmt_tok $CACHE_CREATE)${RST} ${DIM}out${RST} ${BOLD}$(fmt_tok $TOTAL_OUT)${RST}"
+  printf '%b\n' "  ${DIM}tokens${RST} $(fmt_tok $CTX_TOTAL)/$(fmt_tok $EFFECTIVE_CTX) ${DIM}—${RST} ${DIM}in${RST} ${BOLD}$(fmt_tok $INPUT_TOK)${RST} ${DIM}cached${RST} ${GREEN}${BOLD}$(fmt_tok $CACHE_READ)${RST} ${DIM}created${RST} ${YELLOW}$(fmt_tok $CACHE_CREATE)${RST} ${DIM}out${RST} ${BOLD}$(fmt_tok $TOTAL_OUT)${RST}"
 fi
 
 [ "$PRESET" = "essential" ] && exit 0
