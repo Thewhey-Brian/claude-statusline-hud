@@ -209,7 +209,10 @@ The statusline automatically adapts to your terminal width:
 | `↑↓` | Commits ahead of / behind remote |
 | `⚡ agent` | Active agent name (when using `--agent`) |
 | `🌿 worktree` | Active worktree name and branch |
-| `NORMAL`/`INSERT` | Vim keybinding mode |
+| `NORMAL`/`INSERT` | Vim keybinding mode (the built-in `-- INSERT --` line is hidden so it isn't shown twice) |
+| `#1234 ✓` | Open PR for the current branch, coloured by review state (`✓` approved, `●` pending, `✗` changes requested, `◌` draft). GitLab MRs show as `!1234` |
+| `fast` | Fast mode is on |
+| `max`/`high`/`low` | Current reasoning effort level (hidden in compact terminals) |
 
 ### Row 2 — Live Activity (conditional, only when active)
 
@@ -247,11 +250,13 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 |---|---|
 | `Context 42%` | Context window fill % with autocompact buffer estimation |
 | `⚠` | Warning when adjusted context ≥ 90% or tokens exceed 200k |
-| `Usage 5h` | Rolling 5-hour rate limit with time consumed / total |
-| `Usage 7d` | Rolling 7-day rate limit with time consumed / total |
-| `Credits` | Credit-based accounts (Team/Enterprise/Business) show used / total credit limit instead of rate-limit bars (auto-detected) |
-| `syncing` | Shown when using stale data during API backoff |
+| `Usage 5h` | Rolling 5-hour rate limit with `↺` time until reset |
+| `Usage 7d` | Rolling 7-day rate limit with `↺` time until reset |
+| `Credits` | Credit-based accounts (Team/Enterprise/Business, or a gateway spend limit) show credit usage instead of rate-limit bars (auto-detected) |
+| `syncing` | Shown when using stale data during API backoff (legacy path only, see below) |
 | `tokens 179k/200k — in 30k cached 140k ...` | Separate row at 85%+ context showing token breakdown |
+
+**Where the usage numbers come from:** Claude Code 2.1.x sends `rate_limits` directly to the statusline for Pro/Max subscribers, so the HUD reads them from stdin with no network call. On older releases (or when the field is absent) it falls back to the OAuth `/usage` endpoint with the caching and backoff described above.
 
 ### Row 4 — Session Stats
 | Element | Description |
@@ -260,7 +265,7 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 | `⏱ duration` | Wall-clock session time |
 | `(api N%)` | % of wall-clock time spent waiting for API responses |
 | `+N -N ▲▼═` | Lines added/removed with net direction (▲ growing, ▼ shrinking, ═ neutral) |
-| `cache N%` | Prompt cache hit rate — higher means cheaper and faster |
+| `cache N%` | Session-wide prompt cache hit rate — higher means cheaper and faster. `·1h`/`·5m` shows the cache TTL in wide terminals; red `cold` means the cached prefix has expired and the next request will re-cache |
 | `Nk/min` | Output token throughput |
 
 ### Row 5 — System Vitals (btop-style)
@@ -298,8 +303,8 @@ All expensive operations are cached to keep the statusline snappy:
 
 ## Requirements
 
-- **Required:** `bash`, `jq`
-- **Optional:** `git` (git status), `curl` (rate limits)
+- **Required:** `bash`, `jq`, Claude Code ≥ 2.1.0 (≥ 2.1.251 for session-wide prompt-cache stats)
+- **Optional:** `git` (git status), `curl` (rate-limit fallback on older Claude Code releases)
 
 ## File Structure
 

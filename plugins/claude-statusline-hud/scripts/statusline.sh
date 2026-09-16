@@ -8,6 +8,10 @@
 #    essential — 2 rows: + Activity (when active), Context/Usage bars
 #    full      — 3–4 rows: + Stats (cost, duration, lines, etc.)  (default)
 #    vitals    — 4–5 rows: + System vitals (CPU, Mem, GPU, Disk, Battery)
+#
+#  Requires Claude Code ≥ 2.1.0. Uses natively-provided rate_limits,
+#  prompt_cache, effort, fast_mode and pr fields when present, and falls
+#  back to the OAuth /usage endpoint on older releases.
 # ================================================================
 
 set -f  # disable globbing for safety
@@ -54,6 +58,25 @@ CACHE_READ=$(j '.context_window.current_usage.cache_read_input_tokens // 0')
 TOTAL_OUT=$(j '.context_window.total_output_tokens // 0')
 TRANSCRIPT=$(j '.transcript_path // ""')
 CTX_SIZE=$(j '.context_window.context_window_size // 200000')
+# --- Fields added in newer Claude Code releases (all optional) ---
+EFFORT=$(j '.effort.level // ""')
+FAST_MODE=$(j '.fast_mode // false')
+PR_NUM=$(j '.pr.number // ""')
+PR_STATE=$(j '.pr.review_state // ""')
+PR_KIND=$(j '.pr.kind // "pr"')
+PC_PRESENT=$(j 'if .prompt_cache then "1" else "0" end')
+PC_WARM=$(j 'if .prompt_cache.warm == false then "false" else "true" end')
+PC_HIT=$(j '.prompt_cache.hit_ratio // "" | if . == "" then "" else (. * 100 | floor) end')
+PC_TTL=$(j '.prompt_cache.ttl // ""')
+# Native rate limits (Claude Code ≥ 2.1.x, Pro/Max only). Normalised to the same
+# shape the OAuth /usage endpoint returns so the display code below is shared.
+NATIVE_RL=$(j 'if .rate_limits then
+  {
+    five_hour: (if .rate_limits.five_hour then {utilization: .rate_limits.five_hour.used_percentage, resets_at: (.rate_limits.five_hour.resets_at // null | if . then todateiso8601 else null end)} else null end),
+    seven_day: (if .rate_limits.seven_day then {utilization: .rate_limits.seven_day.used_percentage, resets_at: (.rate_limits.seven_day.resets_at // null | if . then todateiso8601 else null end)} else null end),
+    spend_pct: (.rate_limits.spend_limit.used_percentage // null),
+    spend_reset: (.rate_limits.spend_limit.resets_at // null | if . then todateiso8601 else null end)
+  } | tojson else "" end')
 
 # --- Smart directory name ---
 if [ "$DIR" = "$HOME" ]; then DIR_NAME="~"
@@ -291,6 +314,29 @@ if [ -n "$WT_NAME" ]; then
   WT_TRUNC="${WT_NAME:0:15}"
   BADGES="${BADGES}${SEP}${DIM}🌿 ${WT_TRUNC}${WT_BRANCH:+→${WT_BRANCH}}${RST}"
 fi
+# Open PR / MR for the current branch, coloured by review state.
+if [ -n "$PR_NUM" ]; then
+  case "$PR_STATE" in
+    approved)          PR_CLR="$GREEN";  PR_ICON="✓" ;;
+    changes_requested) PR_CLR="$RED";    PR_ICON="✗" ;;
+    draft)             PR_CLR="$DIM";    PR_ICON="◌" ;;
+    pending)           PR_CLR="$YELLOW"; PR_ICON="●" ;;
+    *)                 PR_CLR="$MAGENTA"; PR_ICON="" ;;
+  esac
+  [ "$USE_UNICODE" = "1" ] || PR_ICON=""
+  PR_TAG="#${PR_NUM}"; [ "$PR_KIND" = "mr" ] && PR_TAG="!${PR_NUM}"
+  BADGES="${BADGES}${SEP}${PR_CLR}${PR_TAG}${PR_ICON:+ $PR_ICON}${RST}"
+fi
+# Fast mode and reasoning effort (effort hidden in compact tier).
+[ "$FAST_MODE" = "true" ] && BADGES="${BADGES}${SEP}${BOLD}${YELLOW}fast${RST}"
+if [ -n "$EFFORT" ] && [ "$TIER" != "compact" ]; then
+  case "$EFFORT" in
+    max|xhigh) EFF_CLR="$MAGENTA" ;;
+    low)       EFF_CLR="$DIM" ;;
+    *)         EFF_CLR="$BLUE" ;;
+  esac
+  BADGES="${BADGES}${SEP}${EFF_CLR}${EFFORT}${RST}"
+fi
 
 # --- Update notice ---
 UPDATE_BADGE=""
@@ -463,7 +509,11 @@ if [ "$RATE_LIMITED_COUNT" -gt 0 ]; then
   CACHE_TTL=$BACKOFF
 fi
 
-if [ "$(file_age "$USAGE_CACHE")" -lt "$CACHE_TTL" ]; then
+RL_NATIVE=0
+if [ -n "$NATIVE_RL" ]; then
+  # Claude Code delivered rate limits on stdin — no OAuth call, no cache needed.
+  USAGE_JSON="$NATIVE_RL"; RL_NATIVE=1
+elif [ "$(file_age "$USAGE_CACHE")" -lt "$CACHE_TTL" ]; then
   USAGE_JSON=$(cat "$USAGE_CACHE")
   [ "$RATE_LIMITED_COUNT" -gt 0 ] && RL_SYNCING=1
 else
@@ -512,7 +562,28 @@ if [ -n "$USAGE_JSON" ]; then
   # ---- Credit-based (business/team/enterprise) accounts ----
   SPEND_LIMIT_MINOR=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.limit.amount_minor // 0')
   FIVE_NULL=$(printf '%s' "$USAGE_JSON" | jq -r 'if .five_hour == null then "1" else "0" end')
-  if [ "$SPEND_LIMIT_MINOR" != "0" ] && [ "$SPEND_LIMIT_MINOR" != "null" ] \
+  NATIVE_SPEND=$(printf '%s' "$USAGE_JSON" | jq -r '.spend_pct // ""')
+  if [ "$RL_NATIVE" = "1" ] && [ -n "$NATIVE_SPEND" ] && [ "$FIVE_NULL" = "1" ]; then
+    # Gateway spend limit delivered natively: percentage only, no amounts.
+    SP_PCT=$(printf '%s' "$NATIVE_SPEND" | cut -d. -f1)
+    SP_CLR=$(bar_color "$SP_PCT"); SP_BAR=$(make_bar "$SP_PCT" "$RL_BAR_W")
+    SP_RESET=$(printf '%s' "$USAGE_JSON" | jq -r '.spend_reset // ""')
+    SP_RT=""
+    if [ -n "$SP_RESET" ]; then
+      secs=$(printf '%s' "$SP_RESET" | jq -Rr 'fromdateiso8601 - now | floor' 2>/dev/null)
+      if [ -n "$secs" ] && [ "$secs" -gt 0 ] 2>/dev/null; then
+        d=$((secs/86400)); h=$(((secs%86400)/3600))
+        if [ "$USE_UNICODE" = "1" ]; then RICON="↺"; else RICON="r:"; fi
+        if [ "$d" -gt 0 ]; then SP_RT=" ${DIM}${RICON}${d}d ${h}h${RST}"; else SP_RT=" ${DIM}${RICON}${h}h${RST}"; fi
+      fi
+    fi
+    if [ "$TIER" = "compact" ]; then
+      RL_DISPLAY="${DIM}Cr${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SP_PCT}%${RST}${SP_RT}"
+    else
+      RL_DISPLAY="${DIM}Credits${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SP_PCT}%${RST}${SP_RT}"
+    fi
+    SKIP_UTIL=1
+  elif [ "$SPEND_LIMIT_MINOR" != "0" ] && [ "$SPEND_LIMIT_MINOR" != "null" ] \
      && { [ "$ACCOUNT_IS_BUSINESS" = "1" ] || [ "$FIVE_NULL" = "1" ]; }; then
     SP_USED_MINOR=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.used.amount_minor // 0')
     SP_EXP=$(printf '%s' "$USAGE_JSON" | jq -r '.spend.limit.exponent // 2')
@@ -606,7 +677,15 @@ if [ "$LINES_ADD" -gt 0 ] || [ "$LINES_DEL" -gt 0 ]; then
 fi
 
 CACHE_HIT=""
-if [ "$TOTAL_INPUT" -gt 0 ]; then
+if [ "$PC_PRESENT" = "1" ] && [ -n "$PC_HIT" ]; then
+  # Session-wide hit ratio from Claude Code's prompt_cache stats (≥ 2.1.251).
+  CP="$PC_HIT"
+  if [ "$CP" -ge 80 ]; then CC="$GREEN"; elif [ "$CP" -ge 40 ]; then CC="$YELLOW"; else CC="$RED"; fi
+  CACHE_HIT="${DIM}cache${RST} ${CC}${BOLD}${CP}%${RST}"
+  if [ "$PC_WARM" != "true" ]; then CACHE_HIT="${CACHE_HIT} ${RED}cold${RST}"
+  elif [ -n "$PC_TTL" ] && [ "$TIER" = "wide" ]; then CACHE_HIT="${CACHE_HIT}${DIM}·${PC_TTL}${RST}"; fi
+elif [ "$TOTAL_INPUT" -gt 0 ]; then
+  # Fallback: last-call ratio from context_window.current_usage.
   CP=$((CACHE_READ * 100 / TOTAL_INPUT))
   if [ "$CP" -ge 80 ]; then CC="$GREEN"; elif [ "$CP" -ge 40 ]; then CC="$YELLOW"; else CC="$RED"; fi
   CACHE_HIT="${DIM}cache${RST} ${CC}${BOLD}${CP}%${RST}"

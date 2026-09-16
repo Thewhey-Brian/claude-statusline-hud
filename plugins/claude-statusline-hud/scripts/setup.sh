@@ -13,10 +13,13 @@ if [ ! -f "$SETTINGS_FILE" ]; then
 fi
 
 # --- Inject statusLine config if not already set ---
+# hideVimModeIndicator: the HUD renders vim.mode itself, so suppress the
+# built-in "-- INSERT --" line to avoid showing it twice.
 EXISTING=$(jq -r '.statusLine.command // ""' "$SETTINGS_FILE" 2>/dev/null)
-if [ "$EXISTING" != "$SL_CMD" ]; then
+HIDE_VIM=$(jq -r '.statusLine.hideVimModeIndicator // false' "$SETTINGS_FILE" 2>/dev/null)
+if [ "$EXISTING" != "$SL_CMD" ] || [ "$HIDE_VIM" != "true" ]; then
   TMP=$(mktemp)
-  jq --arg cmd "$SL_CMD" '.statusLine = {"type": "command", "command": $cmd}' "$SETTINGS_FILE" > "$TMP" && mv "$TMP" "$SETTINGS_FILE"
+  jq --arg cmd "$SL_CMD" '.statusLine = ((.statusLine // {}) + {"type": "command", "command": $cmd, "hideVimModeIndicator": true})' "$SETTINGS_FILE" > "$TMP" && mv "$TMP" "$SETTINGS_FILE"
 fi
 
 # --- Create default preset if none exists ---
