@@ -248,7 +248,7 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 ### Row 3 — Capacity Bars
 | Element | Description |
 |---|---|
-| `Context 42%` | Context window fill % with autocompact buffer estimation |
+| `Context 42%` | Context window fill %, computed against Claude Code's effective window (`context_window_size` minus the reserved output buffer) so it matches the number Claude Code itself reports |
 | `⚠` | Warning when adjusted context ≥ 90% or tokens exceed 200k |
 | `Usage 5h` | Rolling 5-hour rate limit with `↺` time until reset |
 | `Usage 7d` | Rolling 7-day rate limit with `↺` time until reset |
