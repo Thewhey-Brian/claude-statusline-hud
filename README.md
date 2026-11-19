@@ -188,6 +188,17 @@ export CLAUDE_STATUSLINE_PRESET=essential
 /statusline
 ```
 
+### Other options
+
+| Setting | Where | Effect |
+|---|---|---|
+| `CLAUDE_SL_MODEL_LIMITS=0` | env | Hide per-model weekly limits (e.g. `Fable`) and skip the usage API call when Claude Code already provides 5h/7d |
+| `CLAUDE_SL_ASCII=1` / `CLAUDE_SL_UNICODE=1` | env | Force ASCII or Unicode bars |
+| `"refreshInterval": 5` | `statusLine` in `~/.claude/settings.json` | Re-run the HUD every N seconds even when idle (useful with `vitals`). Claude Code already refreshes on activity and when a usage window or the prompt cache expires |
+| `"padding": 0` | `statusLine` in `~/.claude/settings.json` | Horizontal padding around the HUD |
+
+The setup hook only sets `type`, `command` and `hideVimModeIndicator`; any other `statusLine` keys you add are kept.
+
 ## Adaptive Width
 
 The statusline automatically adapts to your terminal width:
@@ -208,7 +219,8 @@ The statusline automatically adapts to your terminal width:
 | ` branch` | Git branch with dirty status (`+staged ~unstaged ?untracked`) |
 | `↑↓` | Commits ahead of / behind remote |
 | `⚡ agent` | Active agent name (when using `--agent`) |
-| `🌿 worktree` | Active worktree name and branch |
+| `🌿 worktree` | Active worktree name and branch (also shown for any linked git worktree) |
+| *session name* | Name set with `/rename`, in dim italics (hidden in compact terminals) |
 | `NORMAL`/`INSERT` | Vim keybinding mode (the built-in `-- INSERT --` line is hidden so it isn't shown twice) |
 | `#1234 ✓` | Open PR for the current branch, coloured by review state (`✓` approved, `●` pending, `✗` changes requested, `◌` draft). GitLab MRs show as `!1234` |
 | `fast` | Fast mode is on |
@@ -252,11 +264,12 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 | `⚠` | Warning when adjusted context ≥ 90% or tokens exceed 200k |
 | `Usage 5h` | Rolling 5-hour rate limit with `↺` time until reset |
 | `Usage 7d` | Rolling 7-day rate limit with `↺` time until reset |
-| `Credits` | Credit-based accounts (Team/Enterprise/Business, or a gateway spend limit) show credit usage instead of rate-limit bars (auto-detected) |
+| `Fable 100%` | Per-model weekly limit (e.g. Fable), when your plan has one. Bold when it applies to the model you're using; bar shown on terminals ≥140 columns; `↺` shown only if it resets at a different time from `7d`. Hide with `CLAUDE_SL_MODEL_LIMITS=0` |
+| `Credits` | Credit-based accounts (Team/Enterprise/Business, or a gateway spend limit) show credit usage instead of rate-limit bars (auto-detected). Gateways that report amounts show `($12.35 / $30/mo)` |
 | `syncing` | Shown when using stale data during API backoff (legacy path only, see below) |
 | `tokens 179k/200k — in 30k cached 140k ...` | Separate row at 85%+ context showing token breakdown |
 
-**Where the usage numbers come from:** Claude Code 2.1.x sends `rate_limits` directly to the statusline for Pro/Max subscribers, so the HUD reads them from stdin with no network call. On older releases (or when the field is absent) it falls back to the OAuth `/usage` endpoint with the caching and backoff described above.
+**Where the usage numbers come from:** Claude Code 2.1.x sends `rate_limits` (5h, 7d, gateway spend) directly to the statusline for subscribers, so the HUD reads those from stdin. Per-model weekly limits such as Fable are not part of that payload, so the HUD reads them from the OAuth `/usage` endpoint (`limits[]` entries of kind `weekly_scoped`, or the older `seven_day_opus`/`seven_day_sonnet` fields), cached for 5 minutes. On older releases, or when `rate_limits` is absent, the 5h/7d bars come from the same endpoint.
 
 ### Row 4 — Session Stats
 | Element | Description |
@@ -265,7 +278,7 @@ Shows the last 5 tools (most recent first), parsed from the session transcript. 
 | `⏱ duration` | Wall-clock session time |
 | `(api N%)` | % of wall-clock time spent waiting for API responses |
 | `+N -N ▲▼═` | Lines added/removed with net direction (▲ growing, ▼ shrinking, ═ neutral) |
-| `cache N%` | Session-wide prompt cache hit rate — higher means cheaper and faster. `·1h`/`·5m` shows the cache TTL in wide terminals; red `cold` means the cached prefix has expired and the next request will re-cache |
+| `cache N%` | Session-wide prompt cache hit rate — higher means cheaper and faster. `·1h`/`·5m` shows the cache TTL in wide terminals; red `cold` means the cached prefix has expired and the next request will re-cache; yellow `N miss` counts unexplained cache misses this session |
 | `Nk/min` | Output token throughput |
 
 ### Row 5 — System Vitals (btop-style)
@@ -299,12 +312,12 @@ All expensive operations are cached to keep the statusline snappy:
 | Live activity (tools/todos/agents) | 2 seconds | Parses last 100 lines of transcript JSONL |
 | System vitals (CPU/mem/GPU/disk) | 5 seconds | Single cache file, sourced as shell vars |
 | Git info (branch, dirty, ahead/behind) | 10 seconds | |
-| Rate limit API call | 5 min (exponential backoff on 429) | File lock prevents concurrent calls. Falls back to stale data with `syncing` indicator. |
+| Usage API call (per-model limits; 5h/7d on older releases) | 5 min (exponential backoff on 429) | File lock prevents concurrent calls. Falls back to stale data with `syncing` indicator. |
 
 ## Requirements
 
-- **Required:** `bash`, `jq`, Claude Code ≥ 2.1.0 (≥ 2.1.251 for session-wide prompt-cache stats)
-- **Optional:** `git` (git status), `curl` (rate-limit fallback on older Claude Code releases)
+- **Required:** `bash`, `jq`, Claude Code ≥ 2.1.0 (≥ 2.1.251 for session-wide prompt-cache stats; tested on 2.1.328)
+- **Optional:** `git` (git status), `curl` (per-model weekly limits, and the rate-limit fallback on older Claude Code releases)
 
 ## File Structure
 
