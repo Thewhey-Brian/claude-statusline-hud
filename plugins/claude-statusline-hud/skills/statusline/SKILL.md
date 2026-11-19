@@ -20,4 +20,9 @@ echo "full" > ~/.claude/statusline-preset
 
 The user can also set the `CLAUDE_STATUSLINE_PRESET` environment variable.
 
+Other options:
+
+- Per-model weekly limits (e.g. `Fable 100%` after the 7d bar) show by default when the plan has them. To hide them, set `CLAUDE_SL_MODEL_LIMITS=0` in the `env` block of `~/.claude/settings.json`.
+- To refresh the HUD on a timer (e.g. live system vitals), add `"refreshInterval": 5` (seconds, ≥1) to the `statusLine` object in `~/.claude/settings.json`. Keep the existing `type`, `command` and `hideVimModeIndicator` keys.
+
 If the user asks to delete/disable the statusline, remove the `statusLine` key from `~/.claude/settings.json`.

@@ -10,8 +10,9 @@
 #    vitals    — 4–5 rows: + System vitals (CPU, Mem, GPU, Disk, Battery)
 #
 #  Requires Claude Code ≥ 2.1.0. Uses natively-provided rate_limits,
-#  prompt_cache, effort, fast_mode and pr fields when present, and falls
-#  back to the OAuth /usage endpoint on older releases.
+#  prompt_cache, effort, fast_mode, pr and session_name fields when present,
+#  and falls back to the OAuth /usage endpoint on older releases. Per-model
+#  weekly limits (e.g. Fable) always come from the cached OAuth /usage call.
 # ================================================================
 
 set -f  # disable globbing for safety
@@ -74,8 +75,18 @@ NATIVE_RL=$(j 'if .rate_limits then
     five_hour: (if .rate_limits.five_hour then {utilization: .rate_limits.five_hour.used_percentage, resets_at: (.rate_limits.five_hour.resets_at // null | if . then todateiso8601 else null end)} else null end),
     seven_day: (if .rate_limits.seven_day then {utilization: .rate_limits.seven_day.used_percentage, resets_at: (.rate_limits.seven_day.resets_at // null | if . then todateiso8601 else null end)} else null end),
     spend_pct: (.rate_limits.spend_limit.used_percentage // null),
-    spend_reset: (.rate_limits.spend_limit.resets_at // null | if . then todateiso8601 else null end)
+    spend_reset: (.rate_limits.spend_limit.resets_at // null | if . then todateiso8601 else null end),
+    spend_used_usd: (.rate_limits.spend_limit.used_usd // null),
+    spend_limit_usd: (.rate_limits.spend_limit.limit_usd // null),
+    spend_period: (.rate_limits.spend_limit.period // null)
   } | tojson else "" end')
+# Newer optional fields (Claude Code 2.1.3xx).
+SESSION_NAME=$(j '.session_name // ""')
+GIT_WT=$(j '.workspace.git_worktree // ""')
+PC_MISSES=$(j '.prompt_cache.misses // 0')
+# Per-model weekly limits (e.g. Fable) are not in stdin rate_limits; they come
+# from the OAuth /usage endpoint. CLAUDE_SL_MODEL_LIMITS=0 hides them.
+MODEL_LIMITS="${CLAUDE_SL_MODEL_LIMITS:-1}"
 MAX_OUT=$(j '.context_window.max_output_tokens // 20000')
 
 # --- Smart directory name ---
@@ -313,6 +324,14 @@ fi
 if [ -n "$WT_NAME" ]; then
   WT_TRUNC="${WT_NAME:0:15}"
   BADGES="${BADGES}${SEP}${DIM}🌿 ${WT_TRUNC}${WT_BRANCH:+→${WT_BRANCH}}${RST}"
+elif [ -n "$GIT_WT" ]; then
+  # Linked git worktree outside a --worktree session.
+  BADGES="${BADGES}${SEP}${DIM}🌿 ${GIT_WT:0:15}${RST}"
+fi
+# Session name set via /rename (hidden in compact tier).
+if [ -n "$SESSION_NAME" ] && [ "$TIER" != "compact" ]; then
+  SN="$SESSION_NAME"; [ "${#SN}" -gt 20 ] && SN="${SN:0:19}…"
+  BADGES="${BADGES}${SEP}${DIM}${ITAL}${SN}${RST}"
 fi
 # Open PR / MR for the current branch, coloured by review state.
 if [ -n "$PR_NUM" ]; then
@@ -518,16 +537,18 @@ if [ "$RATE_LIMITED_COUNT" -gt 0 ]; then
   CACHE_TTL=$BACKOFF
 fi
 
-RL_NATIVE=0
-if [ -n "$NATIVE_RL" ]; then
-  # Claude Code delivered rate limits on stdin — no OAuth call, no cache needed.
-  USAGE_JSON="$NATIVE_RL"; RL_NATIVE=1
-elif [ "$(file_age "$USAGE_CACHE")" -lt "$CACHE_TTL" ]; then
-  USAGE_JSON=$(cat "$USAGE_CACHE")
-  [ "$RATE_LIMITED_COUNT" -gt 0 ] && RL_SYNCING=1
-else
+# Load the OAuth /usage response (cached CACHE_TTL, file-locked, 429 backoff).
+# Sets OAUTH_JSON, OAUTH_SYNCING (1 = stale cache shown), OAUTH_ERR.
+OAUTH_JSON=""; OAUTH_SYNCING=0; OAUTH_ERR=""
+load_oauth_usage() {
+  if [ "$(file_age "$USAGE_CACHE")" -lt "$CACHE_TTL" ]; then
+    OAUTH_JSON=$(cat "$USAGE_CACHE")
+    [ "$RATE_LIMITED_COUNT" -gt 0 ] && OAUTH_SYNCING=1
+    return
+  fi
   if ( set -o noclobber; echo $$ > "$USAGE_LOCK" ) 2>/dev/null; then
     trap "rm -f '$USAGE_LOCK'" EXIT
+    local TK RESP HTTP_CODE BODY
     TK=$(get_oauth_token)
     if [ -n "$TK" ]; then
       RESP=$(curl -s --max-time 5 -w '\n%{http_code}' "https://api.anthropic.com/api/oauth/usage" \
@@ -536,26 +557,39 @@ else
       HTTP_CODE=$(printf '%s' "$RESP" | tail -1)
       BODY=$(printf '%s' "$RESP" | sed '$d')
       if [ "$HTTP_CODE" = "200" ] && printf '%s' "$BODY" | jq -e '.five_hour' >/dev/null 2>&1; then
-        USAGE_JSON="$BODY"
-        printf '%s' "$USAGE_JSON" > "$USAGE_CACHE"
+        OAUTH_JSON="$BODY"
+        printf '%s' "$OAUTH_JSON" > "$USAGE_CACHE"
         printf "RATE_LIMITED_COUNT=0\nLAST_ERR=''\n" > "$USAGE_META"
       elif [ "$HTTP_CODE" = "429" ]; then
         RATE_LIMITED_COUNT=$((RATE_LIMITED_COUNT + 1))
         printf "RATE_LIMITED_COUNT=%d\nLAST_ERR='rate limited'\n" "$RATE_LIMITED_COUNT" > "$USAGE_META"
-        if [ -f "$USAGE_CACHE" ]; then USAGE_JSON=$(cat "$USAGE_CACHE"); RL_SYNCING=1; touch "$USAGE_CACHE"
-        else RL_ERR="rate limited"; fi
-      elif [ "$HTTP_CODE" = "401" ]; then RL_ERR="token expired"
-      elif [ "$HTTP_CODE" = "403" ]; then RL_ERR="not on Max plan"
+        if [ -f "$USAGE_CACHE" ]; then OAUTH_JSON=$(cat "$USAGE_CACHE"); OAUTH_SYNCING=1; touch "$USAGE_CACHE"
+        else OAUTH_ERR="rate limited"; fi
+      elif [ "$HTTP_CODE" = "401" ]; then OAUTH_ERR="token expired"
+      elif [ "$HTTP_CODE" = "403" ]; then OAUTH_ERR="not on Max plan"
       else
-        if [ -f "$USAGE_CACHE" ]; then USAGE_JSON=$(cat "$USAGE_CACHE"); RL_SYNCING=1
-        else RL_ERR="http ${HTTP_CODE:-err}"; fi
+        if [ -f "$USAGE_CACHE" ]; then OAUTH_JSON=$(cat "$USAGE_CACHE"); OAUTH_SYNCING=1
+        else OAUTH_ERR="http ${HTTP_CODE:-err}"; fi
       fi
-    else RL_ERR="no token"; fi
+    else OAUTH_ERR="no token"; fi
     rm -f "$USAGE_LOCK"; trap - EXIT
   else
-    [ -f "$USAGE_CACHE" ] && USAGE_JSON=$(cat "$USAGE_CACHE")
+    [ -f "$USAGE_CACHE" ] && OAUTH_JSON=$(cat "$USAGE_CACHE")
     [ "$(file_age "$USAGE_LOCK")" -gt 30 ] && rm -f "$USAGE_LOCK"
   fi
+}
+
+RL_NATIVE=0
+if [ -n "$NATIVE_RL" ]; then
+  # Claude Code delivered 5h/7d limits on stdin. Only per-model weekly limits
+  # need the (cached) OAuth call; skip it for gateway spend-only setups.
+  USAGE_JSON="$NATIVE_RL"; RL_NATIVE=1
+  if [ "$MODEL_LIMITS" != "0" ] && printf '%s' "$NATIVE_RL" | jq -e '.five_hour or .seven_day' >/dev/null 2>&1; then
+    load_oauth_usage
+  fi
+else
+  load_oauth_usage
+  USAGE_JSON="$OAUTH_JSON"; RL_SYNCING="$OAUTH_SYNCING"; RL_ERR="$OAUTH_ERR"
 fi
 
 [ -z "$USAGE_JSON" ] && [ -z "$RL_ERR" ] && [ -n "${LAST_ERR:-}" ] && RL_ERR="$LAST_ERR"
@@ -586,8 +620,16 @@ if [ -n "$USAGE_JSON" ]; then
         if [ "$d" -gt 0 ]; then SP_RT=" ${DIM}${RICON}${d}d ${h}h${RST}"; else SP_RT=" ${DIM}${RICON}${h}h${RST}"; fi
       fi
     fi
+    # Newer gateways also report USD amounts and the period they cover.
+    SP_USD=$(printf '%s' "$USAGE_JSON" | jq -r 'if .spend_used_usd != null and .spend_limit_usd != null
+      then "$\(.spend_used_usd * 100 | round / 100) / $\(.spend_limit_usd * 100 | round / 100)" else "" end')
+    case "$(printf '%s' "$USAGE_JSON" | jq -r '.spend_period // ""')" in
+      daily) SP_PER="/day" ;; weekly) SP_PER="/wk" ;; monthly) SP_PER="/mo" ;; *) SP_PER="" ;;
+    esac
     if [ "$TIER" = "compact" ]; then
       RL_DISPLAY="${DIM}Cr${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SP_PCT}%${RST}${SP_RT}"
+    elif [ -n "$SP_USD" ]; then
+      RL_DISPLAY="${DIM}Credits${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SP_PCT}%${RST} ${DIM}(${SP_USD}${SP_PER})${RST}${SP_RT}"
     else
       RL_DISPLAY="${DIM}Credits${RST} ${SP_CLR}${SP_BAR}${RST} ${BOLD}${SP_PCT}%${RST}${SP_RT}"
     fi
@@ -613,17 +655,19 @@ fi
 
 # seconds-until-reset from an ISO8601 resets_at string -> "Xd Yh"/"Xh Ym"/"Xm".
 # Handles fractional seconds and a +00:00 / Z UTC suffix. Empty if unavailable.
-fmt_reset() {
-  local secs; secs=$(printf '%s' "$USAGE_JSON" | jq -r --arg p "$1" '
-    (.[$p].resets_at // "") as $r
-    | if ($r | type) == "string" and ($r | length) > 0
-      then (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now)
-      else -1 end | floor' 2>/dev/null)
+fmt_until() {
+  local secs; secs=$(jq -rn --arg r "$1" '
+    if ($r | length) > 0
+    then (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now)
+    else -1 end | floor' 2>/dev/null)
   [ -z "$secs" ] && return; [ "$secs" -lt 0 ] 2>/dev/null && return
   local d=$((secs/86400)) h=$(((secs%86400)/3600)) m=$(((secs%3600)/60))
   if   [ "$d" -gt 0 ]; then printf '%dd %dh' "$d" "$h"
   elif [ "$h" -gt 0 ]; then printf '%dh %dm' "$h" "$m"
   else printf '%dm' "$m"; fi
+}
+fmt_reset() {
+  fmt_until "$(printf '%s' "$USAGE_JSON" | jq -r --arg p "$1" '.[$p].resets_at // "" | if type == "string" then . else "" end' 2>/dev/null)"
 }
 
 if [ -n "${SKIP_UTIL:-}" ]; then
@@ -652,6 +696,49 @@ else
   if [ "$TIER" = "compact" ]; then RL_DISPLAY="${DIM}usage ${YELLOW}--${RST}"
   else RL_DISPLAY="${DIM}Usage${RST}  ${YELLOW}${BOLD}--${RST} ${DIM}(${RL_ERR:-unavailable})${RST}"; fi
 fi
+
+# ---- Per-model weekly limits (e.g. Fable) from OAuth /usage ----
+# New API: .limits[] entries with kind "weekly_scoped" and scope.model.display_name.
+# Legacy API: .seven_day_opus / .seven_day_sonnet. Expired windows are dropped.
+SCOPED_DISPLAY=""
+if [ "$MODEL_LIMITS" != "0" ] && [ -n "$OAUTH_JSON" ]; then
+  SCOPED=$(printf '%s' "$OAUTH_JSON" | jq -r '
+    def until_reset: if type == "string" and length > 0
+      then (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - now else 1 end;
+    [ .limits[]? | select(.kind == "weekly_scoped")
+      | { n: (.scope.model.display_name // (.scope.surface | if type == "string" then . elif type == "object" then (.display_name // .name) else null end) // "Scoped"),
+          p: (.percent // 0), r: (.resets_at // "") } ] as $new
+    | (if ($new | length) > 0 then $new else
+        [ (["seven_day_opus","Opus"], ["seven_day_sonnet","Sonnet"]) as [$k, $n]
+          | .[$k] | select(type == "object" and .utilization != null)
+          | { n: $n, p: .utilization, r: (.resets_at // "") } ] end)
+    | .[] | select(.r | until_reset > 0)
+    | "\(.n)\t\(.p | floor)\t\(.r)"' 2>/dev/null)
+  if [ -n "$SCOPED" ]; then
+    if [ "$USE_UNICODE" = "1" ]; then RICON="↺"; else RICON="r:"; fi
+    MODEL_LC=$(printf '%s' "$MODEL" | tr '[:upper:]' '[:lower:]')
+    while IFS="$(printf '\t')" read -r S_NAME S_PCT S_RESET; do
+      [ -z "$S_NAME" ] && continue
+      S_CLR=$(bar_color "$S_PCT")
+      # Bold label when the limit applies to the model in use; dim otherwise.
+      S_LC=$(printf '%s' "$S_NAME" | tr '[:upper:]' '[:lower:]')
+      case "$MODEL_LC" in *"$S_LC"*) S_LBL="${BOLD}${S_NAME}${RST}" ;; *) S_LBL="${DIM}${S_NAME}${RST}" ;; esac
+      # Reset time only when it differs from the 7d window (usually identical).
+      S_RT=""; S_R=$(fmt_until "$S_RESET")
+      [ -n "$S_R" ] && [ "$S_R" != "${U7_RESET:-}" ] && S_RT=" ${DIM}${RICON}${S_R}${RST}"
+      if [ "$TIER" = "compact" ]; then
+        SCOPED_DISPLAY="${SCOPED_DISPLAY}${SEP}${S_LBL} ${S_CLR}${BOLD}${S_PCT}%${RST}"
+      elif [ "$TIER" = "wide" ] && [ "$COLS" -ge 140 ] 2>/dev/null; then
+        SCOPED_DISPLAY="${SCOPED_DISPLAY}${SEP}${S_LBL} ${S_CLR}$(make_bar "$S_PCT" "$RL_BAR_W")${RST} ${BOLD}${S_PCT}%${RST}${S_RT}"
+      else
+        SCOPED_DISPLAY="${SCOPED_DISPLAY}${SEP}${S_LBL} ${S_CLR}${BOLD}${S_PCT}%${RST}${S_RT}"
+      fi
+    done <<EOS
+$SCOPED
+EOS
+  fi
+fi
+RL_DISPLAY="${RL_DISPLAY}${SCOPED_DISPLAY}"
 
 R3="${DIM}Context${RST} ${CTX_CLR}${CTX_BAR}${RST} ${CTX_LABEL}${CTX_WARN}"
 R3="${R3}${SEP}${RL_DISPLAY}"
@@ -693,6 +780,9 @@ if [ "$PC_PRESENT" = "1" ] && [ -n "$PC_HIT" ]; then
   CACHE_HIT="${DIM}cache${RST} ${CC}${BOLD}${CP}%${RST}"
   if [ "$PC_WARM" != "true" ]; then CACHE_HIT="${CACHE_HIT} ${RED}cold${RST}"
   elif [ -n "$PC_TTL" ] && [ "$TIER" = "wide" ]; then CACHE_HIT="${CACHE_HIT}${DIM}·${PC_TTL}${RST}"; fi
+  # Unexplained cache misses this session (prefix shrank without a compaction).
+  [ "${PC_MISSES:-0}" -gt 0 ] 2>/dev/null && [ "$TIER" != "compact" ] && \
+    CACHE_HIT="${CACHE_HIT} ${YELLOW}${PC_MISSES} miss${RST}"
 elif [ "$TOTAL_INPUT" -gt 0 ]; then
   # Fallback: last-call ratio from context_window.current_usage.
   CP=$((CACHE_READ * 100 / TOTAL_INPUT))
